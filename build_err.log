@@ -1,0 +1,100 @@
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `npm run build`
+下午12:29:39 [vite-plugin-svelte] src/routes/+page.svelte:50:6 Buttons and links should either contain text or have an `aria-label`, `aria-labelledby` or `title` attribute
+https://svelte.dev/e/a11y_consider_explicit_label
+48:     </div>
+49:     <div class="flex items-center gap-4">
+50:       <button on:click={() => showSettings = true} class="p-2 hover:bg-gray-700 rounded-full">
+                   ^
+51:         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+52:       </button>
+下午12:29:39 [vite-plugin-svelte] src/routes/+page.svelte:62:10 A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control
+60:       {#if imagePath}
+61:         <div class="flex flex-col gap-2">
+62:           <label class="text-xs font-semibold text-gray-400 uppercase">Tools</label>
+                                                                                        ^
+63:           <button on:click={cropToSquare} class="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1 rounded">
+64:             Crop to Square (Center)
+下午12:29:39 [vite-plugin-svelte] src/routes/+page.svelte:69:10 A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control
+67: 
+68:         <div class="flex flex-col gap-2">
+69:           <label class="text-xs font-semibold text-gray-400 uppercase">Grid Layout</label>
+                                                                                              ^
+70:           <div class="flex gap-2 items-center">
+71:             <span class="w-8 text-sm">Rows</span>
+下午12:29:39 [vite-plugin-svelte] src/routes/+page.svelte:83:10 A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control
+81: 
+82:         <div class="flex flex-col gap-2">
+83:           <label class="text-xs font-semibold text-gray-400 uppercase">Overlap ({Math.round(overlap*100)}%)</label>
+                                                                                                                       ^
+84:           <input type="range" min="0" max="0.5" step="0.05" bind:value={overlap} class="accent-blue-500">
+85:         </div>
+下午12:29:39 [vite-plugin-svelte] src/routes/+page.svelte:88:10 A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control
+86:         
+87:         <div class="flex flex-col gap-2">
+88:           <label class="text-xs font-semibold text-gray-400 uppercase">Tile Resolution</label>
+                                                                                                  ^
+89:           <select bind:value={tileRes} class="bg-gray-700 border border-gray-600 rounded p-1 text-sm">
+90:             <option value={512}>512 x 512</option>
+下午12:29:39 [vite-plugin-svelte] src/lib/ImageUploader.svelte:42:0 Visible, non-interactive elements with a click event must be accompanied by a keyboard event handler. Consider whether an interactive element such as `<button type="button">` or `<a>` might be more appropriate
+https://svelte.dev/e/a11y_click_events_have_key_events
+40: </script>
+41: 
+42: <div class="border-2 border-dashed border-gray-600 rounded-xl p-12 flex flex-col items-center justify-center text-gray-400 hover:border-blue-500 hover:text-blue-500 transition cursor-pointer"
+          ^
+43:   on:click={selectFile}
+44:   on:dragover|preventDefault
+下午12:29:39 [vite-plugin-svelte] src/lib/ImageUploader.svelte:42:0 `<div>` with a click, dragover or drop handler must have an ARIA role
+https://svelte.dev/e/a11y_no_static_element_interactions
+40: </script>
+41: 
+42: <div class="border-2 border-dashed border-gray-600 rounded-xl p-12 flex flex-col items-center justify-center text-gray-400 hover:border-blue-500 hover:text-blue-500 transition cursor-pointer"
+          ^
+43:   on:click={selectFile}
+44:   on:dragover|preventDefault
+下午12:29:39 [vite-plugin-svelte] src/lib/Settings.svelte:23:6 A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control
+21:     
+22:     <div class="mb-4">
+23:       <label class="block text-sm font-medium mb-1">Google AI API Key</label>
+                                                                                 ^
+24:       <input type="password" bind:value={apiKey} class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white" placeholder="AIzaSy..." />
+25:     </div>
+下午12:29:39 [vite-plugin-svelte] src/lib/Settings.svelte:28:6 A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control
+26: 
+27:     <div class="mb-4">
+28:       <label class="block text-sm font-medium mb-1">Model Name</label>
+                                                                          ^
+29:       <input type="text" bind:value={modelName} class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white" placeholder="gemini-1.5-pro" />
+30:       <p class="text-xs text-gray-400 mt-1">Experimental: try 'gemini-2.0-flash-exp' or 'gemini-3-pro-image-preview' if available.</p>
+下午12:29:39 [vite-plugin-svelte] src/lib/Settings.svelte:34:6 A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control
+32: 
+33:     <div class="mb-4">
+34:       <label class="block text-sm font-medium mb-1">System Prompt</label>
+                                                                             ^
+35:       <textarea bind:value={prompt} rows="3" class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"></textarea>
+36:     </div>
+✗ Build failed in 328ms
+error during build:
+[vite]: Rollup failed to resolve import "@tauri-apps/api/dialog" from "/Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/src/lib/ImageUploader.svelte".
+This is most likely unintended because it can break your application at runtime.
+If you do want to externalize this module explicitly add it to
+`build.rollupOptions.external`
+    at viteLog (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46374:15)
+    at file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46432:18
+    at onwarn (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/@sveltejs/kit/src/exports/vite/index.js:933:9)
+    at file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46430:7
+    at onRollupLog (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46422:5)
+    at onLog (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46072:7)
+    at file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/rollup/dist/es/shared/node-entry.js:20958:32
+    at Object.logger [as onLog] (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/rollup/dist/es/shared/node-entry.js:22945:9)
+    at ModuleLoader.handleInvalidResolvedId (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/rollup/dist/es/shared/node-entry.js:21689:26)
+    at file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/rollup/dist/es/shared/node-entry.js:21647:26
+beforeBuildCommand `npm run build` failed with exit code 1
+       Error beforeBuildCommand `npm run build` failed with exit code 1

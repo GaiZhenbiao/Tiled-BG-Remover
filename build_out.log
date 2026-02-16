@@ -1,0 +1,11 @@
+
+> gemini-tile-upscaler@0.1.0 tauri
+> tauri build
+
+
+> gemini-tile-upscaler@0.1.0 build
+> svelte-kit sync && vite build
+
+vite v6.4.1 building SSR bundle for production...
+transforming...
+✓ 27 modules transformed.

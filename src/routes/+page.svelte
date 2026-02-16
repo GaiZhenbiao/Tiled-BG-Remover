@@ -47,7 +47,11 @@
       <span class="text-blue-400">Gemini</span> Tile Upscaler
     </div>
     <div class="flex items-center gap-4">
-      <button on:click={() => showSettings = true} class="p-2 hover:bg-gray-700 rounded-full">
+      <button 
+        aria-label="Settings"
+        on:click={() => showSettings = true} 
+        class="p-2 hover:bg-gray-700 rounded-full"
+      >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
       </button>
     </div>
@@ -59,34 +63,34 @@
     <aside class="w-64 bg-gray-800 border-r border-gray-700 p-4 flex flex-col gap-6 overflow-y-auto">
       {#if imagePath}
         <div class="flex flex-col gap-2">
-          <label class="text-xs font-semibold text-gray-400 uppercase">Tools</label>
-          <button on:click={cropToSquare} class="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1 rounded">
+          <label for="tools-label" class="text-xs font-semibold text-gray-400 uppercase">Tools</label>
+          <button id="tools-label" on:click={cropToSquare} class="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1 rounded">
             Crop to Square (Center)
           </button>
         </div>
 
         <div class="flex flex-col gap-2">
-          <label class="text-xs font-semibold text-gray-400 uppercase">Grid Layout</label>
+          <label for="grid-rows" class="text-xs font-semibold text-gray-400 uppercase">Grid Layout</label>
           <div class="flex gap-2 items-center">
             <span class="w-8 text-sm">Rows</span>
-            <input type="range" min="1" max="8" bind:value={rows} class="flex-1 accent-blue-500">
+            <input id="grid-rows" type="range" min="1" max="8" bind:value={rows} class="flex-1 accent-blue-500">
             <span class="w-4 text-sm text-right">{rows}</span>
           </div>
           <div class="flex gap-2 items-center">
             <span class="w-8 text-sm">Cols</span>
-            <input type="range" min="1" max="8" bind:value={cols} class="flex-1 accent-blue-500">
+            <input id="grid-cols" type="range" min="1" max="8" bind:value={cols} class="flex-1 accent-blue-500">
             <span class="w-4 text-sm text-right">{cols}</span>
           </div>
         </div>
 
         <div class="flex flex-col gap-2">
-          <label class="text-xs font-semibold text-gray-400 uppercase">Overlap ({Math.round(overlap*100)}%)</label>
-          <input type="range" min="0" max="0.5" step="0.05" bind:value={overlap} class="accent-blue-500">
+          <label for="overlap-slider" class="text-xs font-semibold text-gray-400 uppercase">Overlap ({Math.round(overlap*100)}%)</label>
+          <input id="overlap-slider" type="range" min="0" max="0.5" step="0.05" bind:value={overlap} class="accent-blue-500">
         </div>
         
         <div class="flex flex-col gap-2">
-          <label class="text-xs font-semibold text-gray-400 uppercase">Tile Resolution</label>
-          <select bind:value={tileRes} class="bg-gray-700 border border-gray-600 rounded p-1 text-sm">
+          <label for="tile-res-select" class="text-xs font-semibold text-gray-400 uppercase">Tile Resolution</label>
+          <select id="tile-res-select" bind:value={tileRes} class="bg-gray-700 border border-gray-600 rounded p-1 text-sm">
             <option value={512}>512 x 512</option>
             <option value={1024}>1024 x 1024</option>
             <option value={2048}>2048 x 2048</option>

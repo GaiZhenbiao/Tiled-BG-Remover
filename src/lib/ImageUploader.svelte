@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
-  import { open } from '@tauri-apps/api/dialog';
+  import { open } from '@tauri-apps/plugin-dialog';
   import { listen } from '@tauri-apps/api/event';
 
   const dispatch = createEventDispatcher();
@@ -14,32 +14,34 @@
       }]
     });
     if (selected) {
-      dispatch('selected', selected);
+      if (Array.isArray(selected)) {
+        dispatch('selected', selected[0]);
+      } else {
+        dispatch('selected', selected);
+      }
     }
   }
 
   function handleDrop(e) {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      // For web drag drop, we get File objects. 
-      // But in Tauri, we might need to handle file paths differently if not using the tauri-plugin-fs
-      // However, typical HTML5 drag drop gives File objects. 
-      // Tauri's drag-drop payload is different if dragging from OS into window.
-      // We rely on Tauri's file-drop event listener for OS drag-drop.
-    }
   }
 
   // Listen for file drop
   listen('tauri://file-drop', event => {
     const payload = event.payload;
-    if (payload && payload.length > 0) {
+    if (Array.isArray(payload) && payload.length > 0) {
       dispatch('selected', payload[0]);
     }
   });
 
 </script>
 
-<div class="border-2 border-dashed border-gray-600 rounded-xl p-12 flex flex-col items-center justify-center text-gray-400 hover:border-blue-500 hover:text-blue-500 transition cursor-pointer"
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<!-- svelte-ignore a11y-click-events-have-key-events -->
+<div 
+  role="button"
+  tabindex="0"
+  class="border-2 border-dashed border-gray-600 rounded-xl p-12 flex flex-col items-center justify-center text-gray-400 hover:border-blue-500 hover:text-blue-500 transition cursor-pointer"
   on:click={selectFile}
   on:dragover|preventDefault
   on:drop={handleDrop}

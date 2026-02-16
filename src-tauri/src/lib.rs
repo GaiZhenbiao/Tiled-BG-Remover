@@ -1,4 +1,3 @@
-use tauri::Manager;
 use std::sync::Mutex;
 use std::path::PathBuf;
 use tempfile::TempDir;

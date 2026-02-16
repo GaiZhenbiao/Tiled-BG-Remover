@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, createEventDispatcher } from 'svelte';
-  import { invoke } from '@tauri-apps/api/tauri';
-  import { convertFileSrc } from '@tauri-apps/api/tauri';
+  import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+
+  const dispatch = createEventDispatcher();
 
   export let src: string;
   export let rows: number;
@@ -14,7 +15,6 @@
   let displaySrc = '';
   
   // Grid visualization state
-  let gridStyle = '';
   let tiles: any[] = [];
   
   // Result state
@@ -38,8 +38,6 @@
   }
 
   async function calculateGrid() {
-    // Only visualization logic here based on image aspect ratio?
-    // We need image dimensions.
     if (!imgElement || !imgElement.complete) return;
     
     const w = imgElement.naturalWidth;
@@ -61,7 +59,7 @@
         const y = r * (tileH - overlapH);
         tiles.push({
           r, c, x, y, w: tileW, h: tileH,
-          status: 'pending' // pending, processing, done, error
+          status: 'pending'
         });
       }
     }
@@ -80,7 +78,6 @@
       tempDir = splitRes.temp_dir;
       const tileFiles = splitRes.tiles;
       
-      // Update tiles status
       tiles = tiles.map(t => ({ ...t, status: 'processing' }));
       
       // Simulate API call delay
@@ -111,25 +108,27 @@
     }
   }
   
-  // Crop functionality helper (called from parent?)
   export async function cropCenter() {
      if (!imgElement) return;
      const size = Math.min(imgElement.naturalWidth, imgElement.naturalHeight);
      const x = (imgElement.naturalWidth - size) / 2;
      const y = (imgElement.naturalHeight - size) / 2;
      
-     // Call backend to crop and save as new temp file
      const newPath: string = await invoke('crop_img', {
        path: src, x: Math.round(x), y: Math.round(y), width: Math.round(size), height: Math.round(size)
      });
      
-     // Update src in parent? 
-     // We need to dispatch event to parent to update `imagePath`.
-     // Dispatching 'crop' event.
      dispatch('crop', newPath);
   }
+
+  function handleImageLoad() {
+    calculateGrid();
+  }
   
-  const dispatch = createEventDispatcher();
+  function regenerateTile(tile: any) {
+    alert(`Regenerating tile ${tile.r},${tile.c}`);
+  }
+</script>
 
 <div class="relative w-full h-full flex items-center justify-center overflow-auto" bind:this={container}>
   {#if displaySrc}
@@ -152,7 +151,6 @@
                x={tile.x} y={tile.y} width={tile.w} height={tile.h} 
                fill="none" stroke="rgba(255, 255, 255, 0.5)" stroke-width="2"
              />
-             <!-- Overlap area visualization? -->
            {/each}
         </svg>
       {/if}
@@ -163,6 +161,8 @@
            {#each tiles as tile}
              <!-- svelte-ignore a11y-click-events-have-key-events -->
              <div 
+               role="button"
+               tabindex="0"
                class="absolute hover:bg-blue-500 hover:bg-opacity-20 cursor-pointer group transition-colors border border-transparent hover:border-blue-400"
                style="left: {tile.x / originalW * 100}%; top: {tile.y / originalH * 100}%; width: {tile.w / originalW * 100}%; height: {tile.h / originalH * 100}%;"
                on:click={() => regenerateTile(tile)}
