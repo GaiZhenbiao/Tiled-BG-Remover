@@ -2,6 +2,7 @@ use image::{GenericImageView, ImageFormat, Rgba, RgbaImage, imageops::FilterType
 use std::path::Path;
 use base64::{Engine as _, engine::general_purpose};
 use std::io::Cursor;
+use rayon::prelude::*;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct TileInfo {
@@ -65,7 +66,7 @@ pub fn split_image(
     overlap_ratio: f64, 
     output_dir: &Path
 ) -> Result<(Vec<TileInfo>, u32, u32), String> {
-    let img = image::open(input_path).map_err(|e| e.to_string())?;
+    let img = image::open(input_path).map_err(|e| e.to_string())?.to_rgba8();
     let (w, h) = img.dimensions();
 
     let tile_w_raw = w as f64 / (cols as f64 - (cols as f64 - 1.0) * overlap_ratio);
@@ -76,42 +77,42 @@ pub fn split_image(
     let overlap_w = (tile_w as f64 * overlap_ratio) as u32;
     let overlap_h = (tile_h as f64 * overlap_ratio) as u32;
 
-    let mut tiles = Vec::new();
-
+    let mut tile_configs = Vec::new();
     for r in 0..rows {
         for c in 0..cols {
             let x = c * (tile_w - overlap_w);
             let y = r * (tile_h - overlap_h);
-
-            // Ensure we don't exceed image dimensions
             let actual_w = tile_w.min(w - x);
             let actual_h = tile_h.min(h - y);
-
-            let tile = img.crop_imm(x, y, actual_w, actual_h);
-
-            // Save original tile
-            let orig_file_name = format!("orig_tile_{}_{}.png", r, c);
-            let orig_file_path = output_dir.join(&orig_file_name);
-            tile.to_rgba8().save_with_format(&orig_file_path, ImageFormat::Png).map_err(|e| e.to_string())?;
-
-            // Prepare path for processed tile result
-            let proc_file_name = format!("tile_{}_{}.png", r, c);
-            let proc_file_path = output_dir.join(&proc_file_name);
-
-            tiles.push(TileInfo {
-                r,
-                c,
-                x,
-                y,
-                width: tile.width(),
-                height: tile.height(),
-                path: proc_file_path.to_string_lossy().to_string(),
-                original_path: orig_file_path.to_string_lossy().to_string(),
-            });
+            tile_configs.push((r, c, x, y, actual_w, actual_h));
         }
     }
 
-    Ok((tiles, w, h))
+    let tiles: Result<Vec<TileInfo>, String> = tile_configs.into_par_iter().map(|(r, c, x, y, actual_w, actual_h)| {
+        let tile = img.view(x, y, actual_w, actual_h).to_image();
+
+        // Save original tile
+        let orig_file_name = format!("orig_tile_{}_{}.png", r, c);
+        let orig_file_path = output_dir.join(&orig_file_name);
+        tile.save_with_format(&orig_file_path, ImageFormat::Png).map_err(|e| e.to_string())?;
+
+        // Prepare path for processed tile result
+        let proc_file_name = format!("tile_{}_{}.png", r, c);
+        let proc_file_path = output_dir.join(&proc_file_name);
+
+        Ok(TileInfo {
+            r,
+            c,
+            x,
+            y,
+            width: actual_w,
+            height: actual_h,
+            path: proc_file_path.to_string_lossy().to_string(),
+            original_path: orig_file_path.to_string_lossy().to_string(),
+        })
+    }).collect();
+
+    Ok((tiles?, w, h))
 }
 
 pub fn merge_tiles(
@@ -123,57 +124,139 @@ pub fn merge_tiles(
     remove_bg: bool,
     tolerance: u8,
 ) -> Result<String, String> {
+    if tile_paths.is_empty() {
+        return Err("No tiles to merge".to_string());
+    }
+
     let max_r = tile_paths.iter().map(|(r, _, _)| *r).max().unwrap_or(0);
     let max_c = tile_paths.iter().map(|(_, c, _)| *c).max().unwrap_or(0);
     let rows = max_r + 1;
     let cols = max_c + 1;
 
-    let mut tile_map = std::collections::HashMap::new();
-    let mut first_tile_w = 0;
-    let mut first_tile_h = 0;
-
-    for (r, c, path) in tile_paths {
+    // Load tiles in parallel
+    let loaded_tiles: Result<std::collections::HashMap<(u32, u32), RgbaImage>, String> = tile_paths.into_par_iter().map(|(r, c, path)| {
         let mut final_path = path.clone();
         if !std::path::Path::new(&path).exists() {
-            let dir = std::path::Path::new(&path).parent().unwrap();
+            let dir = std::path::Path::new(&path).parent().ok_or("Invalid path")?;
             let orig_path = dir.join(format!("orig_tile_{}_{}.png", r, c));
             if orig_path.exists() {
                 final_path = orig_path.to_string_lossy().to_string();
+            } else {
+                return Err(format!("Tile result and original both missing for {},{}", r, c));
             }
         }
 
         let img = image::open(&final_path).map_err(|e| format!("Failed to open {}: {}", final_path, e))?.to_rgba8();
-        if r == 0 && c == 0 {
-            first_tile_w = img.width();
-            first_tile_h = img.height();
-        }
-        tile_map.insert((r, c), img);
-    }
+        Ok(((r, c), img))
+    }).collect();
 
+    let tile_map = loaded_tiles?;
+    
+    // Determine dimensions from tiles
+    let (first_tile_w, first_tile_h) = tile_map.get(&(0, 0)).map(|img| img.dimensions()).ok_or("Missing tile 0,0")?;
     let overlap_w = (first_tile_w as f64 * overlap_ratio) as u32;
     let overlap_h = (first_tile_h as f64 * overlap_ratio) as u32;
 
-    let mut row_imgs = Vec::new();
-    for r in 0..rows {
-        let mut row_img = tile_map.get(&(r, 0)).ok_or(format!("Missing tile {},0", r))?.clone();
-        for c in 1..cols {
-            let next_tile = tile_map.get(&(r, c)).ok_or(format!("Missing tile {},{}", r, c))?;
-            row_img = blend_images(&row_img, next_tile, overlap_w, true, key_color, tolerance);
-        }
-        row_imgs.push(row_img);
-    }
+    let stride_w = first_tile_w - overlap_w;
+    let stride_h = first_tile_h - overlap_h;
 
-    let mut final_img = row_imgs[0].clone();
-    for r in 1..rows {
-        final_img = blend_images(&final_img, &row_imgs[r as usize], overlap_h, false, key_color, tolerance);
+    // Calculate final image size
+    // Final width = (cols - 1) * stride_w + last_tile_width
+    let last_tile_w = tile_map.get(&(0, max_c)).map(|img| img.width()).unwrap_or(first_tile_w);
+    let last_tile_h = tile_map.get(&(max_r, 0)).map(|img| img.height()).unwrap_or(first_tile_h);
+    
+    let res_w = max_c * stride_w + last_tile_w;
+    let res_h = max_r * stride_h + last_tile_h;
+
+    let mut final_img = RgbaImage::new(res_w, res_h);
+
+    // Instead of chaining blends, we iterate over each pixel of the result and calculate its value.
+    // This is more complex but more efficient and easier to parallelize.
+    // For simplicity, let's just do it sequentially but avoid multiple image allocations.
+    
+    for r in 0..rows {
+        for c in 0..cols {
+            if let Some(tile) = tile_map.get(&(r, c)) {
+                let start_x = c * stride_w;
+                let start_y = r * stride_h;
+                
+                for y in 0..tile.height() {
+                    for x in 0..tile.width() {
+                        let global_x = start_x + x;
+                        let global_y = start_y + y;
+                        
+                        if global_x >= res_w || global_y >= res_h { continue; }
+                        
+                        let p_new = tile.get_pixel(x, y);
+                        
+                        // If it's the first time we touch this pixel (no overlap from previous tiles in top/left)
+                        // Or if we are in an overlap region, we need to blend.
+                        
+                        // Simplified blending: 
+                        // If it's a first-seen pixel, just put it.
+                        // If it's an overlap, blend with what's already there.
+                        
+                        // We process tiles from top-left to bottom-right.
+                        // Overlap can happen with:
+                        // - Left tile (c-1) if x < overlap_w
+                        // - Top tile (r-1) if y < overlap_h
+                        // - Top-left tile (r-1, c-1) if x < overlap_w && y < overlap_h
+                        
+                        let in_overlap_x = c > 0 && x < overlap_w;
+                        let in_overlap_y = r > 0 && y < overlap_h;
+                        
+                        if !in_overlap_x && !in_overlap_y {
+                            final_img.put_pixel(global_x, global_y, *p_new);
+                        } else {
+                            let p_old = final_img.get_pixel(global_x, global_y);
+                            
+                            let p_new_key = is_key_color(p_new, key_color, tolerance);
+                            let p_old_key = is_key_color(p_old, key_color, tolerance);
+                            
+                            let blended = if p_new_key && !p_old_key {
+                                *p_old
+                            } else if !p_new_key && p_old_key {
+                                *p_new
+                            } else if !p_new_key && !p_old_key {
+                                // Linear blend based on distance to edge
+                                // If overlap in both, we should ideally handle 4-way blend, 
+                                // but 2-way at a time (as we go tile by tile) might be enough.
+                                
+                                let factor = if in_overlap_x && !in_overlap_y {
+                                    x as f32 / overlap_w as f32
+                                } else if in_overlap_y && !in_overlap_x {
+                                    y as f32 / overlap_h as f32
+                                } else {
+                                    // Corner: average of both factors?
+                                    (x as f32 / overlap_w as f32).max(y as f32 / overlap_h as f32)
+                                };
+                                
+                                let r = ((1.0 - factor) * p_old[0] as f32 + factor * p_new[0] as f32) as u8;
+                                let g = ((1.0 - factor) * p_old[1] as f32 + factor * p_new[1] as f32) as u8;
+                                let b = ((1.0 - factor) * p_old[2] as f32 + factor * p_new[2] as f32) as u8;
+                                let a = ((1.0 - factor) * p_old[3] as f32 + factor * p_new[3] as f32) as u8;
+                                Rgba([r, g, b, a])
+                            } else {
+                                *p_new
+                            };
+                            final_img.put_pixel(global_x, global_y, blended);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if remove_bg {
-        for pixel in final_img.pixels_mut() {
-            if is_key_color(pixel, key_color, tolerance) {
-                *pixel = Rgba([0, 0, 0, 0]);
+        final_img.as_flat_samples_mut().as_mut_slice().par_chunks_exact_mut(4).for_each(|pixel| {
+            let p = Rgba([pixel[0], pixel[1], pixel[2], pixel[3]]);
+            if is_key_color(&p, key_color, tolerance) {
+                pixel[0] = 0;
+                pixel[1] = 0;
+                pixel[2] = 0;
+                pixel[3] = 0;
             }
-        }
+        });
     }
 
     let mut buffer = Cursor::new(Vec::new());
@@ -183,109 +266,14 @@ pub fn merge_tiles(
     Ok(format!("data:image/png;base64,{}", b64))
 }
 
-fn blend_images(img1: &RgbaImage, img2: &RgbaImage, overlap: u32, horizontal: bool, key_color: &str, tolerance: u8) -> RgbaImage {
-    let (w1, h1) = img1.dimensions();
-    let (w2, h2) = img2.dimensions();
-
-    if horizontal {
-        let res_w = w1 + w2 - overlap;
-        let res_h = h1.max(h2);
-        let mut res = RgbaImage::from_pixel(res_w, res_h, Rgba([255, 255, 255, 255]));
-
-        for y in 0..h1 {
-            for x in 0..(w1 - overlap) {
-                res.put_pixel(x, y, *img1.get_pixel(x, y));
-            }
-        }
-        for y in 0..h2 {
-            for x in 0..(w2 - overlap) {
-                 res.put_pixel(w1 + x, y, *img2.get_pixel(overlap + x, y));
-            }
-        }
-
-        let common_h = h1.min(h2);
-        for y in 0..common_h {
-            for x in 0..overlap {
-                let p1 = img1.get_pixel(w1 - overlap + x, y);
-                let p2 = img2.get_pixel(x, y);
-
-                let p1_key = is_key_color(p1, key_color, tolerance);
-                let p2_key = is_key_color(p2, key_color, tolerance);
-
-                let pixel = if p1_key && !p2_key {
-                    *p2
-                } else if !p1_key && p2_key {
-                    *p1
-                } else if !p1_key && !p2_key {
-                    let alpha = x as f32 / overlap as f32;
-                    let r = ((1.0 - alpha) * p1[0] as f32 + alpha * p2[0] as f32) as u8;
-                    let g = ((1.0 - alpha) * p1[1] as f32 + alpha * p2[1] as f32) as u8;
-                    let b = ((1.0 - alpha) * p1[2] as f32 + alpha * p2[2] as f32) as u8;
-                    let a = ((1.0 - alpha) * p1[3] as f32 + alpha * p2[3] as f32) as u8;
-                    Rgba([r, g, b, a])
-                } else {
-                    // Both are key color, use key color or transparent?
-                    // For now, use p2.
-                    *p2
-                };
-                res.put_pixel(w1 - overlap + x, y, pixel);
-            }
-        }
-        res
-    } else {
-        let res_w = w1.max(w2);
-        let res_h = h1 + h2 - overlap;
-        let mut res = RgbaImage::from_pixel(res_w, res_h, Rgba([255, 255, 255, 255]));
-
-        for y in 0..(h1 - overlap) {
-            for x in 0..w1 {
-                res.put_pixel(x, y, *img1.get_pixel(x, y));
-            }
-        }
-        for y in 0..(h2 - overlap) {
-            for x in 0..w2 {
-                res.put_pixel(x, h1 + y, *img2.get_pixel(x, overlap + y));
-            }
-        }
-
-        let common_w = w1.min(w2);
-        for x in 0..common_w {
-            for y in 0..overlap {
-                let p1 = img1.get_pixel(x, h1 - overlap + y);
-                let p2 = img2.get_pixel(x, y);
-
-                let p1_key = is_key_color(p1, key_color, tolerance);
-                let p2_key = is_key_color(p2, key_color, tolerance);
-
-                let pixel = if p1_key && !p2_key {
-                    *p2
-                } else if !p1_key && p2_key {
-                    *p1
-                } else if !p1_key && !p2_key {
-                    let alpha = y as f32 / overlap as f32;
-                    let r = ((1.0 - alpha) * p1[0] as f32 + alpha * p2[0] as f32) as u8;
-                    let g = ((1.0 - alpha) * p1[1] as f32 + alpha * p2[1] as f32) as u8;
-                    let b = ((1.0 - alpha) * p1[2] as f32 + alpha * p2[2] as f32) as u8;
-                    let a = ((1.0 - alpha) * p1[3] as f32 + alpha * p2[3] as f32) as u8;
-                    Rgba([r, g, b, a])
-                } else {
-                    *p2
-                };
-                res.put_pixel(x, h1 - overlap + y, pixel);
-            }
-        }
-        res
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_is_white() {
-        assert!(is_white(&Rgba([255, 255, 255, 255])));
-        assert!(is_white(&Rgba([0, 0, 0, 0]))); 
-        assert!(!is_white(&Rgba([255, 0, 0, 255]))); 
+    fn test_is_key_color() {
+        assert!(is_key_color(&Rgba([255, 255, 255, 255]), "white", 10));
+        assert!(is_key_color(&Rgba([0, 0, 0, 0]), "white", 10)); 
+        assert!(!is_key_color(&Rgba([255, 0, 0, 255]), "white", 10)); 
     }
 }

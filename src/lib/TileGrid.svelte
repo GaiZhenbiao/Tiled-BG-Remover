@@ -17,7 +17,9 @@
   export let bgRemovalEnabled: boolean;
   export let keyColor: string;
   export let tolerance: number = 10;
+  export let concurrency: number = 2;
   export let resultSrc: string = '';
+  export let showOriginalInput: boolean = false;
 
   let container: HTMLDivElement;
   let imgElement: HTMLImageElement;
@@ -224,10 +226,9 @@
       tiles = [...tiles]; 
       
       // Process with concurrency limit
-      const CONCURRENCY = 2;
       const queue = [...tiles.keys()];
       
-      const workers = Array(CONCURRENCY).fill(null).map(async () => {
+      const workers = Array(concurrency).fill(null).map(async () => {
           while (queue.length > 0) {
               const index = queue.shift();
               if (index !== undefined) {
@@ -276,7 +277,7 @@
     <div class="relative inline-block shadow-2xl {bgRemovalEnabled ? 'checkerboard' : ''}">
       <!-- Main Image -->
       <img 
-        src={resultSrc || displaySrc} 
+        src={showOriginalInput ? displaySrc : (resultSrc || displaySrc)} 
         bind:this={imgElement}
         on:load={handleImageLoad}
         class="max-w-none block"
@@ -285,7 +286,7 @@
       />
       
       <!-- Overlay Grid -->
-      {#if tiles.length > 0}
+      {#if tiles.length > 0 && !showOriginalInput}
         <svg class="absolute inset-0 pointer-events-none" viewBox={`0 0 ${originalW} ${originalH}`} preserveAspectRatio="none">
            {#each tiles as tile}
              <rect 
@@ -299,7 +300,7 @@
       {/if}
       
       <!-- Interactive Layer -->
-      {#if tiles.length > 0}
+      {#if tiles.length > 0 && !showOriginalInput}
          <div class="absolute inset-0">
            {#if isSplitting || isMerging}
              <div class="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-10 backdrop-blur-[1px]">

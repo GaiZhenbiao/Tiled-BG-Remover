@@ -24,8 +24,15 @@
   let smartGridEnabled = true;
   
   // BG Removal State
-  let bgRemovalEnabled = localStorage.getItem('bg_removal_enabled') === 'true';
+  let bgRemovalEnabled = false;
   let keyColor = localStorage.getItem('key_color') || 'green';
+  let tolerance = parseInt(localStorage.getItem('key_tolerance') || '10');
+
+  onMount(() => {
+    if (localStorage.getItem('bg_removal_enabled') !== null) {
+      bgRemovalEnabled = localStorage.getItem('bg_removal_enabled') === 'true';
+    }
+  });
   
   // Processing state
   let isProcessing = false;
@@ -41,10 +48,21 @@
   
   async function updateImageInfo() {
     const img = new Image();
-    img.src = convertFileSrc(imagePath);
-    await new Promise(r => img.onload = r);
-    imgWidth = img.naturalWidth;
-    imgHeight = img.naturalHeight;
+    try {
+      const b64 = await invoke('load_image', { path: imagePath });
+      img.src = b64 as string;
+      await new Promise(r => img.onload = r);
+      imgWidth = img.naturalWidth;
+      imgHeight = img.naturalHeight;
+    } catch (e) {
+      console.error("Failed to load image for info:", e);
+    }
+  }
+
+  function clearInput() {
+    imagePath = '';
+    resultSrc = '';
+    logs = [];
   }
 
   $: selectedModel = localStorage.getItem('gemini_model') || 'gemini-1.5-pro';
@@ -59,12 +77,31 @@
 
   // Smart Grid Logic
   $: if (smartGridEnabled && imgWidth && imgHeight && aiOutputRes) {
-    const R = aiOutputRes;
     const O = overlap;
-    // W = R + (cols - 1) * R * (1 - O)
-    // cols = (W - R) / (R * (1 - O)) + 1
-    cols = Math.max(1, Math.ceil((imgWidth - R) / (R * (1 - O)) + 1));
-    rows = Math.max(1, Math.ceil((imgHeight - R) / (R * (1 - O)) + 1));
+    let optimalRows = 1;
+    let optimalCols = 1;
+    
+    // Iterate to find smallest cols that satisfies condition
+    for (let c = 1; c <= 16; c++) {
+        const T_w = imgWidth / (c - (c - 1) * O);
+        if (T_w <= 2 * aiOutputRes) {
+            optimalCols = c;
+            break;
+        }
+        optimalCols = c; 
+    }
+    
+    for (let r = 1; r <= 16; r++) {
+        const T_h = imgHeight / (r - (r - 1) * O);
+        if (T_h <= 2 * aiOutputRes) {
+            optimalRows = r;
+            break;
+        }
+        optimalRows = r;
+    }
+    
+    cols = optimalCols;
+    rows = optimalRows;
   }
   
   // Resolution Info
@@ -115,6 +152,11 @@
     keyColor = color;
     localStorage.setItem('key_color', color);
   }
+
+  function setTolerance(e: any) {
+    tolerance = parseInt(e.target.value);
+    localStorage.setItem('key_tolerance', tolerance.toString());
+  }
 </script>
 
 <main class="h-screen w-screen flex flex-col bg-gray-900 text-white overflow-hidden">
@@ -124,7 +166,25 @@
       <span class="text-blue-400">Gemini</span> Tile Upscaler
     </div>
     <div class="flex items-center gap-2">
+      <!-- BG Removal Toggle -->
+      <div class="flex items-center bg-gray-700 rounded-full px-2 py-1 mr-2 border border-gray-600">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <span class="text-xs font-semibold text-gray-300 uppercase">BG Removal</span>
+          <input type="checkbox" checked={bgRemovalEnabled} on:change={toggleBGRemoval} class="toggle toggle-sm accent-blue-500">
+        </label>
+      </div>
+
+      {#if imagePath}
+        <button on:click={clearInput} class="bg-red-600/80 hover:bg-red-600 px-3 py-1 rounded text-sm flex items-center gap-2" title="Clear Input Image">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        </button>
+      {/if}
+
       {#if resultSrc}
+        <button on:click={() => resultSrc = ''} class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm flex items-center gap-2 border border-gray-600">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"></path><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+          Revert
+        </button>
         <button on:click={saveResult} class="bg-green-600 hover:bg-green-500 px-3 py-1 rounded text-sm flex items-center gap-2">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
           Save
@@ -146,13 +206,13 @@
           on:click={() => activeTab = 'controls'}
           class="flex-1 py-2 text-sm font-medium {activeTab === 'controls' ? 'bg-gray-700 text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:bg-gray-700'}"
         >
-          {$t('controls')}
+          Controls
         </button>
         <button 
           on:click={() => activeTab = 'logs'}
           class="flex-1 py-2 text-sm font-medium {activeTab === 'logs' ? 'bg-gray-700 text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:bg-gray-700'}"
         >
-          {$t('logs')} ({logs.length})
+          Logs ({logs.length})
         </button>
       </div>
 
@@ -160,21 +220,21 @@
         {#if activeTab === 'controls'}
           {#if imagePath}
             <div class="flex flex-col gap-2">
-              <label class="text-xs font-semibold text-gray-400 uppercase">{$t('tools')}</label>
+              <label class="text-xs font-semibold text-gray-400 uppercase">Tools</label>
               <button on:click={() => showCropModal = true} class="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1.5 rounded flex items-center justify-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"></path><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"></path></svg>
-                {$t('cropImage')}
+                Crop Image
               </button>
               <div class="flex flex-wrap gap-1 mt-1">
-                <button on:click={() => performCrop(Math.round((imgWidth - Math.min(imgWidth, imgHeight)) / 2), Math.round((imgHeight - Math.min(imgWidth, imgHeight)) / 2), Math.min(imgWidth, imgHeight), Math.min(imgWidth, imgHeight))} class="text-[10px] bg-gray-700 hover:bg-gray-600 px-2 py-0.5 rounded text-gray-300">{$t('centerCrop')}</button>
+                <button on:click={() => performCrop(Math.round((imgWidth - Math.min(imgWidth, imgHeight)) / 2), Math.round((imgHeight - Math.min(imgWidth, imgHeight)) / 2), Math.min(imgWidth, imgHeight), Math.min(imgWidth, imgHeight))} class="text-[10px] bg-gray-700 hover:bg-gray-600 px-2 py-0.5 rounded text-gray-300">1:1 Center</button>
               </div>
             </div>
 
             <div class="flex flex-col gap-2">
               <div class="flex items-center justify-between">
-                <label class="text-xs font-semibold text-gray-400 uppercase">{$t('gridLayout')}</label>
+                <label class="text-xs font-semibold text-gray-400 uppercase">Grid Layout</label>
                 <label class="flex items-center gap-2 cursor-pointer">
-                  <span class="text-[10px] text-gray-400">{$t('smartGrid')}</span>
+                  <span class="text-[10px] text-gray-400">Smart</span>
                   <input type="checkbox" bind:checked={smartGridEnabled} class="toggle toggle-xs accent-blue-500">
                 </label>
               </div>
@@ -182,22 +242,22 @@
               {#if smartGridEnabled}
                 <div class="bg-gray-900/50 p-2 rounded border border-gray-700 flex flex-col gap-1">
                   <div class="flex justify-between text-xs">
-                    <span class="text-gray-500">{$t('rows')}</span>
+                    <span class="text-gray-500">Rows</span>
                     <span class="font-mono">{rows}</span>
                   </div>
                   <div class="flex justify-between text-xs">
-                    <span class="text-gray-500">{$t('cols')}</span>
+                    <span class="text-gray-500">Cols</span>
                     <span class="font-mono">{cols}</span>
                   </div>
                 </div>
               {:else}
                 <div class="flex gap-2 items-center">
-                  <span class="w-8 text-sm">{$t('rows')}</span>
+                  <span class="w-8 text-sm">Rows</span>
                   <input type="range" min="1" max="16" bind:value={rows} class="flex-1 accent-blue-500">
                   <span class="w-4 text-sm text-right">{rows}</span>
                 </div>
                 <div class="flex gap-2 items-center">
-                  <span class="w-8 text-sm">{$t('cols')}</span>
+                  <span class="w-8 text-sm">Cols</span>
                   <input type="range" min="1" max="16" bind:value={cols} class="flex-1 accent-blue-500">
                   <span class="w-4 text-sm text-right">{cols}</span>
                 </div>
@@ -205,14 +265,14 @@
               
               <div class="flex flex-col gap-1">
                 <div class="flex justify-between items-center">
-                  <span class="text-xs text-gray-400">{$t('overlap')} ({Math.round(overlap*100)}%)</span>
+                  <span class="text-xs text-gray-400">Overlap ({Math.round(overlap*100)}%)</span>
                   <input type="range" min="0" max="0.5" step="0.05" bind:value={overlap} class="w-32 accent-blue-500">
                 </div>
               </div>
             </div>
             
             <div class="flex flex-col gap-2">
-              <label class="text-xs font-semibold text-gray-400 uppercase">{$t('aiOutputRes')}</label>
+              <label class="text-xs font-semibold text-gray-400 uppercase">AI Output Resolution</label>
               <select bind:value={aiOutputRes} class="bg-gray-700 border border-gray-600 rounded p-1.5 text-sm">
                 {#each availableResolutions as res}
                   <option value={res}>{res} x {res}</option>
@@ -220,21 +280,16 @@
               </select>
               <label class="flex items-center gap-2 cursor-pointer mt-1">
                 <input type="checkbox" bind:checked={resizeInputToOutput} class="accent-blue-500">
-                <span class="text-xs text-gray-300">{$t('resizeInput')}</span>
+                <span class="text-xs text-gray-300">Resize input tile to match output</span>
               </label>
             </div>
 
-            <div class="flex flex-col gap-2">
-              <div class="flex items-center justify-between">
-                <label class="text-xs font-semibold text-gray-400 uppercase">{$t('bgRemoval')}</label>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={bgRemovalEnabled} on:change={toggleBGRemoval} class="accent-blue-500">
-                </label>
-              </div>
-              {#if bgRemovalEnabled}
-                <div class="flex gap-2 items-center">
-                  <span class="text-xs text-gray-400">{$t('keyColor')}:</span>
-                  <div class="flex gap-1">
+            {#if bgRemovalEnabled}
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                  <label class="text-xs font-semibold text-gray-400 uppercase">Key Color</label>
+                </div>
+                <div class="flex gap-1">
                     {#each ['green', 'red', 'blue', 'black', 'white'] as color}
                       <button 
                         on:click={() => setKeyColor(color)}
@@ -243,20 +298,26 @@
                         title={color}
                       ></button>
                     {/each}
+                </div>
+                
+                <div class="flex flex-col gap-1 mt-2">
+                  <div class="flex justify-between items-center">
+                    <span class="text-xs text-gray-400">Tolerance ({tolerance})</span>
+                    <input type="range" min="0" max="100" value={tolerance} on:input={setTolerance} class="w-32 accent-blue-500">
                   </div>
                 </div>
-              {/if}
-            </div>
+              </div>
+            {/if}
 
             <div class="bg-gray-900/50 p-3 rounded border border-gray-700 flex flex-col gap-2">
-              <label class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{$t('resolutionInfo')}</label>
+              <label class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Resolution Info</label>
               <div class="flex flex-col gap-1">
                 <div class="flex justify-between text-xs">
-                  <span class="text-gray-400">{$t('wholeImage')}</span>
+                  <span class="text-gray-400">Whole Image</span>
                   <span class="font-mono text-gray-200">{imgWidth} x {imgHeight}</span>
                 </div>
                 <div class="flex justify-between text-xs">
-                  <span class="text-gray-400">{$t('perTile')}</span>
+                  <span class="text-gray-400">Per Tile</span>
                   <span class="font-mono text-gray-200">{Math.round(tileW)} x {Math.round(tileH)}</span>
                 </div>
               </div>
@@ -269,7 +330,7 @@
               class="bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
               disabled={isProcessing}
             >
-              {isProcessing ? $t('processing') : $t('processAll')}
+              {isProcessing ? 'Processing Tiles...' : 'Process All Tiles'}
             </button>
           {/if}
         {:else}
@@ -305,6 +366,7 @@
           {resizeInputToOutput}
           {bgRemovalEnabled}
           {keyColor}
+          {tolerance}
           bind:isProcessing 
           bind:resultSrc
           on:log={addLog}

@@ -21,13 +21,24 @@
   let cols = 2;
   let overlap = 0.1;
   let aiOutputRes = 1024;
+  let concurrency = 2;
   let resizeInputToOutput = true;
   let smartGridEnabled = true;
   
   // BG Removal State
-  let bgRemovalEnabled = localStorage.getItem('bg_removal_enabled') === 'true';
+  let bgRemovalEnabled = false;
   let keyColor = localStorage.getItem('key_color') || 'green';
   let tolerance = parseInt(localStorage.getItem('key_tolerance') || '10');
+  let showOriginalInput = false;
+  
+  onMount(() => {
+    if (localStorage.getItem('bg_removal_enabled') !== null) {
+      bgRemovalEnabled = localStorage.getItem('bg_removal_enabled') === 'true';
+    }
+    if (localStorage.getItem('concurrency') !== null) {
+      concurrency = parseInt(localStorage.getItem('concurrency') || '2');
+    }
+  });
   
   // Processing state
   let isProcessing = false;
@@ -39,6 +50,12 @@
   
   $: if (imagePath) {
     updateImageInfo();
+  }
+
+  function clearInput() {
+    imagePath = '';
+    resultSrc = '';
+    logs = [];
   }
   
   async function updateImageInfo() {
@@ -119,6 +136,10 @@
   $: tileW = imgWidth / (cols - (cols - 1) * overlap);
   $: tileH = imgHeight / (rows - (rows - 1) * overlap);
 
+  $: if (tileW && tileH) {
+    resizeInputToOutput = Math.abs(tileW - tileH) < 0.1;
+  }
+
   function handleImageSelected(path: string) {
     imagePath = path;
     resultSrc = '';
@@ -144,9 +165,22 @@
 
   async function saveResult() {
     if (!resultSrc) return;
+    
+    let defaultPath = 'upscaled_image.png';
+    if (imagePath) {
+        // Extract original filename
+        const parts = imagePath.split(/[\\/]/);
+        const filename = parts.pop();
+        if (filename) {
+            const lastDot = filename.lastIndexOf('.');
+            const name = lastDot > -1 ? filename.substring(0, lastDot) : filename;
+            defaultPath = `${name}_${$t('bgRemoved')}.png`;
+        }
+    }
+
     const path = await save({
       filters: [{ name: 'Image', extensions: ['png'] }],
-      defaultPath: 'upscaled_image.png'
+      defaultPath: defaultPath
     });
     if (path) {
       await invoke('save_merged_image', { path, base64Data: resultSrc });
@@ -185,7 +219,28 @@
         </label>
       </div>
 
+      {#if imagePath}
+        <button on:click={clearInput} class="bg-red-600/80 hover:bg-red-600 px-3 py-1 rounded text-sm flex items-center gap-2" title="Clear Input Image">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        </button>
+      {/if}
+
       {#if resultSrc}
+        <button 
+          on:mousedown={() => showOriginalInput = true} 
+          on:mouseup={() => showOriginalInput = false} 
+          on:mouseleave={() => showOriginalInput = false}
+          on:touchstart={() => showOriginalInput = true} 
+          on:touchend={() => showOriginalInput = false}
+          class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm flex items-center gap-2 border border-gray-600 select-none"
+          title="Hold to Show Original"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        </button>
+        <button on:click={() => resultSrc = ''} class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm flex items-center gap-2 border border-gray-600">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"></path><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+          {$t('revert')}
+        </button>
         <button on:click={saveResult} class="bg-green-600 hover:bg-green-500 px-3 py-1 rounded text-sm flex items-center gap-2">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
           {$t('save')}
@@ -223,15 +278,14 @@
 
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-6">
         {#if activeTab === 'controls'}
-          {#if imagePath}
             <div class="flex flex-col gap-2">
               <label for="tools-label" class="text-xs font-semibold text-gray-400 uppercase">{$t('tools')}</label>
-              <button id="tools-label" on:click={() => showCropModal = true} class="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1.5 rounded flex items-center justify-center gap-2">
+              <button id="tools-label" on:click={() => showCropModal = true} class="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1.5 rounded flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled={!imagePath}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"></path><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"></path></svg>
                 {$t('cropImage')}
               </button>
               <div class="flex flex-wrap gap-1 mt-1">
-                <button on:click={() => performCrop(Math.round((imgWidth - Math.min(imgWidth, imgHeight)) / 2), Math.round((imgHeight - Math.min(imgWidth, imgHeight)) / 2), Math.min(imgWidth, imgHeight), Math.min(imgWidth, imgHeight))} class="text-[10px] bg-gray-700 hover:bg-gray-600 px-2 py-0.5 rounded text-gray-300">{$t('centerCrop')}</button>
+                <button on:click={() => performCrop(Math.round((imgWidth - Math.min(imgWidth, imgHeight)) / 2), Math.round((imgHeight - Math.min(imgWidth, imgHeight)) / 2), Math.min(imgWidth, imgHeight), Math.min(imgWidth, imgHeight))} class="text-[10px] bg-gray-700 hover:bg-gray-600 px-2 py-0.5 rounded text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" disabled={!imagePath}>{$t('centerCrop')}</button>
               </div>
             </div>
 
@@ -333,11 +387,10 @@
             <button 
               on:click={() => isProcessing = true}
               class="bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
-              disabled={isProcessing}
+              disabled={isProcessing || !imagePath}
             >
               {isProcessing ? $t('processing') : $t('processAll')}
             </button>
-          {/if}
         {:else}
           <!-- Logs Tab -->
           <div class="flex flex-col gap-2 font-mono text-[11px]">
@@ -372,16 +425,33 @@
           {bgRemovalEnabled}
           {keyColor}
           {tolerance}
+          {showOriginalInput}
           bind:isProcessing 
           bind:resultSrc
           on:log={addLog}
         />
+
+        {#if resultSrc}
+          <div class="absolute top-4 right-4 flex flex-col gap-2">
+            <button 
+              on:mousedown={() => showOriginalInput = true} 
+              on:mouseup={() => showOriginalInput = false} 
+              on:mouseleave={() => showOriginalInput = false}
+              on:touchstart={() => showOriginalInput = true} 
+              on:touchend={() => showOriginalInput = false}
+              class="bg-gray-800/80 hover:bg-gray-700 text-white p-3 rounded-full shadow-xl border border-gray-600 backdrop-blur-sm transition-all active:scale-90 select-none"
+              title={$t('holdToShowOriginal')}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
+        {/if}
       {/if}
     </section>
   </div>
 
   {#if showSettings}
-    <Settings on:close={() => showSettings = false} />
+    <Settings bind:concurrency on:close={() => showSettings = false} />
   {/if}
 
   {#if showCropModal}
