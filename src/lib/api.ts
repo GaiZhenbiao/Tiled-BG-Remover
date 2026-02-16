@@ -48,8 +48,8 @@ export async function generateImage(imageBlob: Blob | null, prompt: string, mode
   
   // Try to parse image from response
   // 1. Check for inline_data (standard multimodal response for images)
-  const parts = data.candidates?.[0]?.content?.parts || [];
-  for (const part of parts) {
+  const responseParts = data.candidates?.[0]?.content?.parts || [];
+  for (const part of responseParts) {
     if (part.inline_data && part.inline_data.data) {
       return b64toBlob(part.inline_data.data, part.inline_data.mime_type || 'image/png');
     }
@@ -57,7 +57,7 @@ export async function generateImage(imageBlob: Blob | null, prompt: string, mode
   
   // 2. Fallback: Check if text contains a base64 string (sometimes models output text)
   // This is hacky but might work for some experimental models
-  for (const part of parts) {
+  for (const part of responseParts) {
     if (part.text && part.text.length > 1000) { // arbitrary length check
        // Try to find base64 pattern?
        // For now, assume if the model doesn't return inline_data, it failed for our purpose.
