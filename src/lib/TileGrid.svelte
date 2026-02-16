@@ -72,7 +72,7 @@
         path: src,
         rows,
         cols,
-        overlap_ratio: overlap
+        overlapRatio: overlap
       });
       
       tempDir = splitRes.temp_dir;
@@ -94,7 +94,7 @@
         tiles: updatePayload,
         original_w: splitRes.original_width,
         original_h: splitRes.original_height,
-        overlap_ratio: overlap
+        overlapRatio: overlap
       });
       
       resultSrc = mergedB64;
