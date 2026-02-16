@@ -21,7 +21,7 @@ export async function generateImage(imageBlob: Blob, prompt: string, model: stri
     generationConfig: {
       temperature: 0.4,
       maxOutputTokens: 2048,
-      responseMimeType: "image/jpeg" 
+      responseModalities: ["IMAGE"]
     }
   };
 
