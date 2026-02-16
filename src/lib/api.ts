@@ -50,8 +50,9 @@ export async function generateImage(imageBlob: Blob | null, prompt: string, mode
   // 1. Check for inline_data (standard multimodal response for images)
   const responseParts = data.candidates?.[0]?.content?.parts || [];
   for (const part of responseParts) {
-    if (part.inline_data && part.inline_data.data) {
-      return b64toBlob(part.inline_data.data, part.inline_data.mime_type || 'image/png');
+    const inlineData = part.inline_data || part.inlineData;
+    if (inlineData && inlineData.data) {
+      return b64toBlob(inlineData.data, inlineData.mime_type || inlineData.mimeType || 'image/png');
     }
   }
   
