@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { listen } from '@tauri-apps/api/event';
@@ -26,12 +26,27 @@
 
   function handleDrop(e) {
     e.preventDefault();
+    // Fallback for browser drop if Tauri event doesn't catch it
+    if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      // Note: Browser files don't have full paths for security, 
+      // but in Tauri context this might still work or we use Tauri event.
+    }
   }
 
   onMount(async () => {
-    unlisten = await listen('tauri://file-drop', event => {
+    unlisten = await listen('tauri://drag-drop', event => {
+      console.log('File dropped:', event);
       const payload = event.payload;
-      if (Array.isArray(payload) && payload.length > 0) {
+      
+      // Tauri v2 structure: { paths: string[], position: { x: number, y: number } }
+      if (payload && typeof payload === 'object' && 'paths' in payload) {
+        const paths = payload.paths as string[];
+        if (paths.length > 0) {
+          dispatch('selected', paths[0]);
+        }
+      } else if (Array.isArray(payload) && payload.length > 0) {
+        // Fallback for older structure
         dispatch('selected', payload[0]);
       }
     });
