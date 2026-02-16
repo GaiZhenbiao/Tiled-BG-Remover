@@ -8,9 +8,10 @@
     "opener:default",
     "dialog:default",
     "fs:default",
-    {
-      "identifier": "fs:allow-read-recursive",
-      "allow": ["$HOME/**", "$DOWNLOADS/**", "$DESKTOP/**", "$DOCUMENTS/**"]
-    }
+    "fs:allow-read",
+    "fs:scope-home-recursive",
+    "fs:scope-download-recursive",
+    "fs:scope-desktop-recursive",
+    "fs:scope-document-recursive"
   ]
 }
