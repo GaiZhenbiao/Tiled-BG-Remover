@@ -21,19 +21,24 @@ A desktop application (Tauri + Svelte) designed to process high-resolution image
 - **Edge Handling:** Logic aligns tiles to the top-left; edge tiles are handled by intersection to prevent out-of-bounds crashes.
 
 ### 2. File Handling
-- Uses `tempfile` in Rust to manage tile fragments during processing.
-- Frontend uses `convertFileSrc` to display local images and base64 for final results.
+- **Image Loading:** Uses a custom `load_image` Tauri command to read files as Base64 strings. This bypasses Tauri v2 `asset` protocol permission complexities and ensures reliable display.
+- **Image Saving:** Uses `save_image` command to write processed Base64 data back to disk.
+- **Temp Files:** Uses `tempfile` in Rust to manage tile fragments during processing.
 
 ### 3. Tauri v2 Migration
 - Project was upgraded to Tauri v2 to support modern frontend dependencies.
-- Required `tauri-plugin-opener` for basic shell functionality.
-- Uses `svelte-kit sync` in the build pipeline to generate TypeScript configurations.
+- Required `tauri-plugin-opener`, `tauri-plugin-dialog`, and `tauri-plugin-fs` (for permissions).
+- Uses `svelte-kit sync` in the build pipeline.
+
+### 4. API Integration
+- `src/lib/api.ts` implements the call to Google Gemini API (specifically targeting `gemini-3-pro-image-preview`).
+- Assumes the model supports standard `generateContent` endpoint and returns image data in `inline_data`.
 
 ## Critical Files
 - `src-tauri/src/image_processing.rs`: Core logic for `split_image`, `merge_tiles`, and `crop_image`.
-- `src-tauri/src/lib.rs`: Tauri command definitions and plugin initialization.
+- `src-tauri/src/lib.rs`: Tauri command definitions (`load_image`, `save_image`, etc.) and plugin initialization.
 - `src/routes/+page.svelte`: Main application UI and orchestration.
-- `src/lib/TileGrid.svelte`: Interactive grid visualization and overlay.
+- `src/lib/TileGrid.svelte`: Interactive grid visualization, tile processing loop, and image display logic.
 - `src/lib/api.ts`: Gemini API integration bridge.
 
 ## Operational Instructions
@@ -57,4 +62,7 @@ npm run tauri dev
     - Upgraded to Tauri v2 to fix version mismatches.
     - Added "Center Crop 1:1" tool.
     - Setup GitHub Actions for CI/CD.
+    - Fixed Image Display issues by switching to Base64 loading.
+    - Implemented real API integration for background removal.
+    - Restored Drag & Drop functionality.
     - Initialized `AGENTS.md`.

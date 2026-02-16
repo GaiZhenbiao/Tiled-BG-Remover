@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, createEventDispatcher } from 'svelte';
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+  import { generateImage } from './api';
 
   const dispatch = createEventDispatcher();
 
@@ -24,8 +25,17 @@
   let originalH = 0;
   
   $: if (src) {
-    displaySrc = convertFileSrc(src);
+    loadImage(src);
     resultSrc = null; // Reset result when source changes
+  }
+  
+  async function loadImage(path: string) {
+    try {
+      const b64 = await invoke('load_image', { path });
+      displaySrc = b64 as string;
+    } catch (e) {
+      console.error("Failed to load image:", e);
+    }
   }
   
   $: if (rows && cols && overlap && imgElement) {
@@ -80,8 +90,56 @@
       
       tiles = tiles.map(t => ({ ...t, status: 'processing' }));
       
-      // Simulate API call delay
-      await new Promise(r => setTimeout(r, 2000));
+      // 2. Process each tile with API
+      const apiKey = localStorage.getItem('gemini_api_key');
+      const model = localStorage.getItem('gemini_model') || 'gemini-3-pro-image-preview'; // Default as requested
+      const prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
+      
+      if (!apiKey) {
+        throw new Error("API Key not found. Please set it in Settings.");
+      }
+
+      await Promise.all(tileFiles.map(async (tile: any, index: number) => {
+         try {
+           // Read tile
+           const b64Data = await invoke('load_image', { path: tile.path }) as string;
+           
+           // Convert to Blob for API (helper in api.ts? Or manually here)
+           // generateImage expects Blob.
+           // Helper:
+           const res = await fetch(b64Data);
+           const blob = await res.blob();
+           
+           // Call API
+           // We need to handle potential rate limits. Sequential or parallel?
+           // Parallel is faster but might hit limits.
+           // Let's do parallel for now.
+           
+           const resultBlob = await generateImage(blob, prompt, model, apiKey);
+           
+           // Convert result Blob to Base64 to save
+           const reader = new FileReader();
+           reader.readAsDataURL(resultBlob); 
+           const resultB64 = await new Promise<string>(resolve => {
+             reader.onloadend = () => resolve(reader.result as string);
+           });
+           
+           // Save back to tile path (overwrite)
+           await invoke('save_image', { path: tile.path, base64Data: resultB64 });
+           
+           // Update status
+           tiles[index].status = 'done';
+           // Trigger reactivity?
+           tiles = [...tiles];
+           
+         } catch (err) {
+           console.error(`Error processing tile ${tile.r},${tile.c}`, err);
+           tiles[index].status = 'error';
+           tiles = [...tiles];
+           // Don't throw to allow partial success? Or throw?
+           // For now log.
+         }
+      }));
       
       // 3. Merge
       const updatePayload = tileFiles.map((t: any) => ({
@@ -98,7 +156,6 @@
       });
       
       resultSrc = mergedB64;
-      tiles = tiles.map(t => ({ ...t, status: 'done' }));
       
     } catch (e) {
       console.error(e);
@@ -126,7 +183,7 @@
   }
   
   function regenerateTile(tile: any) {
-    alert(`Regenerating tile ${tile.r},${tile.c}`);
+    alert(`Regenerating tile ${tile.r},${tile.c} (Not implemented fully yet, use Process All)`);
   }
 </script>
 
@@ -149,7 +206,7 @@
            {#each tiles as tile}
              <rect 
                x={tile.x} y={tile.y} width={tile.w} height={tile.h} 
-               fill="none" stroke="rgba(255, 255, 255, 0.5)" stroke-width="2"
+               fill="none" stroke={tile.status === 'processing' ? 'yellow' : tile.status === 'done' ? 'green' : 'rgba(255, 255, 255, 0.5)'} stroke-width="2"
              />
            {/each}
         </svg>

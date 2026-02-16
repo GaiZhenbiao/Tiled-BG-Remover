@@ -1,15 +1,12 @@
 export async function generateImage(imageBlob: Blob, prompt: string, model: string, apiKey: string): Promise<Blob> {
-  // This function assumes the model accepts an image and returns an image (or we parse it).
-  // Current public Gemini API (multimodal) returns text.
-  // If the user has access to an image-to-image model via the same API structure:
-  
-  // Convert blob to base64
   const reader = new FileReader();
   reader.readAsDataURL(imageBlob);
   const base64Data = await new Promise<string>((resolve) => {
     reader.onloadend = () => resolve(reader.result as string);
   });
+  // Strip prefix data:image/...;base64,
   const base64Image = base64Data.split(',')[1];
+  const mimeType = base64Data.split(';')[0].split(':')[1];
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   
@@ -17,7 +14,7 @@ export async function generateImage(imageBlob: Blob, prompt: string, model: stri
     contents: [{
       parts: [
         { text: prompt },
-        { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+        { inline_data: { mime_type: mimeType, data: base64Image } }
       ]
     }],
     generationConfig: {
@@ -26,24 +23,6 @@ export async function generateImage(imageBlob: Blob, prompt: string, model: stri
     }
   };
 
-  // If the model expects a specific format for Image-to-Image, the payload might differ.
-  // Standard Gemini (1.5 Pro) will describe the image.
-  // The user mentions "gemini-3-pro-image-preview".
-  // Let's assume it works like the standard API but returns an image in the response 
-  // or a link to an image.
-  // OR, maybe the user wants to use the 'edit' capability if available.
-  
-  // SINCE I cannot know the exact proprietary API shape of a future/private model:
-  // I will implement a placeholder that assumes the API returns a JSON with an image or 
-  // just echoes the input for now if it fails, but with a clear TODO.
-  
-  // However, to make it "functional" as a prototype for "background removal":
-  // I can't actually remove background without a real model.
-  // I will assume the API returns a base64 image in `candidates[0].content.parts[0].inline_data` 
-  // OR `candidates[0].content.parts[0].text` contains a base64 string?
-  
-  // User said: "Upscale using... gemini-3... prompt... Remove the background"
-  
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -51,32 +30,32 @@ export async function generateImage(imageBlob: Blob, prompt: string, model: stri
   });
 
   if (!response.ok) {
-    throw new Error(`API Error: ${response.statusText}`);
+    const errText = await response.text();
+    throw new Error(`API Error ${response.status}: ${errText}`);
   }
 
   const data = await response.json();
   
   // Try to parse image from response
-  // 1. Check for inline_data (Imagen style?)
-  // 2. Check for text containing base64?
-  
-  // Hypothetical response parsing for an image-outputting Gemini:
-  try {
-     // Check if there is an image part
-     const parts = data.candidates?.[0]?.content?.parts || [];
-     for (const part of parts) {
-       if (part.inline_data && part.inline_data.data) {
-         return b64toBlob(part.inline_data.data, part.inline_data.mime_type || 'image/png');
-       }
-     }
-     
-     // Fallback: maybe the text contains a URL or Base64?
-     // For this prototype, if we can't get an image, we throw.
-     console.warn("No image found in response", data);
-     throw new Error("Model did not return an image.");
-  } catch (e) {
-    throw e;
+  // 1. Check for inline_data (standard multimodal response for images)
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  for (const part of parts) {
+    if (part.inline_data && part.inline_data.data) {
+      return b64toBlob(part.inline_data.data, part.inline_data.mime_type || 'image/png');
+    }
   }
+  
+  // 2. Fallback: Check if text contains a base64 string (sometimes models output text)
+  // This is hacky but might work for some experimental models
+  for (const part of parts) {
+    if (part.text && part.text.length > 1000) { // arbitrary length check
+       // Try to find base64 pattern?
+       // For now, assume if the model doesn't return inline_data, it failed for our purpose.
+    }
+  }
+  
+  console.warn("No image found in response", data);
+  throw new Error("Model did not return an image. Check if the model supports image output.");
 }
 
 function b64toBlob(b64Data: string, contentType = '', sliceSize = 512) {
