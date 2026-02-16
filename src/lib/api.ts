@@ -27,7 +27,8 @@ export async function generateImage(imageBlob: Blob | null, prompt: string, mode
     generationConfig: {
       temperature: 0.4,
       maxOutputTokens: 2048,
-      responseModalities: ["IMAGE"]
+      responseModalities: ["IMAGE"],
+      seed: Math.floor(Math.random() * 2147483647) + Date.now() % 1000000
     }
   };
 

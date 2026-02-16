@@ -9,6 +9,7 @@
   import { t } from '../lib/i18n';
 
   let imagePath = '';
+  let originalFilename = '';
   let showSettings = false;
   let showCropModal = false;
   
@@ -143,6 +144,14 @@
   function handleImageSelected(path: string) {
     imagePath = path;
     resultSrc = '';
+    
+    // Store original filename for saving later
+    const parts = path.split(/[\\/]/);
+    const filename = parts.pop();
+    if (filename) {
+        const lastDot = filename.lastIndexOf('.');
+        originalFilename = lastDot > -1 ? filename.substring(0, lastDot) : filename;
+    }
   }
   
   function handleCropDone(e: any) {
@@ -166,17 +175,7 @@
   async function saveResult() {
     if (!resultSrc) return;
     
-    let defaultPath = 'upscaled_image.png';
-    if (imagePath) {
-        // Extract original filename
-        const parts = imagePath.split(/[\\/]/);
-        const filename = parts.pop();
-        if (filename) {
-            const lastDot = filename.lastIndexOf('.');
-            const name = lastDot > -1 ? filename.substring(0, lastDot) : filename;
-            defaultPath = `${name}_${$t('bgRemoved')}.png`;
-        }
-    }
+    let defaultPath = originalFilename ? `${originalFilename}_${$t('bgRemoved')}.png` : 'upscaled_image.png';
 
     const path = await save({
       filters: [{ name: 'Image', extensions: ['png'] }],
@@ -226,17 +225,6 @@
       {/if}
 
       {#if resultSrc}
-        <button 
-          on:mousedown={() => showOriginalInput = true} 
-          on:mouseup={() => showOriginalInput = false} 
-          on:mouseleave={() => showOriginalInput = false}
-          on:touchstart={() => showOriginalInput = true} 
-          on:touchend={() => showOriginalInput = false}
-          class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm flex items-center gap-2 border border-gray-600 select-none"
-          title="Hold to Show Original"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-        </button>
         <button on:click={() => resultSrc = ''} class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm flex items-center gap-2 border border-gray-600">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"></path><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
           {$t('revert')}

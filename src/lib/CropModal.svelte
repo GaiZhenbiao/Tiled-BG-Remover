@@ -5,7 +5,7 @@
   const dispatch = createEventDispatcher();
 
   export let src: string;
-  export let initialAspectRatio = 1;
+  export let initialAspectRatio: number | null = 1;
 
   let container: HTMLDivElement;
   let imgElement: HTMLImageElement;
@@ -47,7 +47,7 @@
   }
 
   function updateCropForAspectRatio() {
-    if (aspectRatio === 0) return; // Free crop (not implemented yet, but could be)
+    if (aspectRatio === null) return; // Free crop - don't reset
     
     // Maintain center if possible, or just reset
     if (imgW / imgH > aspectRatio) {
@@ -182,10 +182,12 @@
   }
 
   const aspectRatios = [
+    { label: 'Free', value: null },
     { label: '1:1', value: 1 },
     { label: '4:3', value: 4/3 },
     { label: '16:9', value: 16/9 },
     { label: '3:2', value: 3/2 },
+    { label: '3:4', value: 3/4 },
     { label: '9:16', value: 9/16 },
   ];
 </script>
