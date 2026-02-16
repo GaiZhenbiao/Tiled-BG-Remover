@@ -92,8 +92,8 @@
       
       const mergedB64: string = await invoke('merge_img', {
         tiles: updatePayload,
-        original_w: splitRes.original_width,
-        original_h: splitRes.original_height,
+        originalW: splitRes.original_width,
+        originalH: splitRes.original_height,
         overlapRatio: overlap
       });
       

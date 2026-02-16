@@ -8,10 +8,11 @@
     "opener:default",
     "dialog:default",
     "fs:default",
-    "fs:read-all",
-    "fs:scope-home-recursive",
-    "fs:scope-download-recursive",
-    "fs:scope-desktop-recursive",
-    "fs:scope-document-recursive"
+    "fs:allow-read",
+    "fs:allow-exists",
+    {
+      "identifier": "fs:scope",
+      "allow": ["**"]
+    }
   ]
 }

@@ -1,9 +1,10 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { listen } from '@tauri-apps/api/event';
 
   const dispatch = createEventDispatcher();
+  let unlisten;
 
   async function selectFile() {
     const selected = await open({
@@ -26,14 +27,18 @@
     e.preventDefault();
   }
 
-  // Listen for file drop
-  listen('tauri://file-drop', event => {
-    const payload = event.payload;
-    if (Array.isArray(payload) && payload.length > 0) {
-      dispatch('selected', payload[0]);
-    }
+  onMount(async () => {
+    unlisten = await listen('tauri://file-drop', event => {
+      const payload = event.payload;
+      if (Array.isArray(payload) && payload.length > 0) {
+        dispatch('selected', payload[0]);
+      }
+    });
   });
 
+  onDestroy(() => {
+    if (unlisten) unlisten();
+  });
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
