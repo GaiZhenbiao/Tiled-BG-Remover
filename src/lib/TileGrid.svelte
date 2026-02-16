@@ -75,6 +75,72 @@
     }
   }
 
+  async function processSingleTile(index: number) {
+    const tile = tiles[index];
+    if (!tile) return;
+
+    tiles[index].status = 'processing';
+    tiles = [...tiles];
+
+    try {
+        const apiKey = localStorage.getItem('gemini_api_key');
+        const model = localStorage.getItem('gemini_model') || 'gemini-3-pro-image-preview'; 
+        const prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
+        
+        if (!apiKey) throw new Error("API Key not found. Please set it in Settings.");
+
+        // Read tile
+        const b64Data = await invoke('load_image', { path: tile.path }) as string;
+        
+        // Convert to Blob
+        const res = await fetch(b64Data);
+        const blob = await res.blob();
+        
+        // API Call
+        const resultBlob = await generateImage(blob, prompt, model, apiKey);
+        
+        // Save
+        const reader = new FileReader();
+        reader.readAsDataURL(resultBlob); 
+        const resultB64 = await new Promise<string>(resolve => {
+             reader.onloadend = () => resolve(reader.result as string);
+        });
+        
+        await invoke('save_image', { path: tile.path, base64Data: resultB64 });
+        
+        tiles[index].status = 'done';
+    } catch (e) {
+        console.error(`Error processing tile ${tile.r},${tile.c}`, e);
+        tiles[index].status = 'error';
+    } finally {
+        tiles = [...tiles];
+    }
+  }
+
+  async function mergeAll() {
+      // 3. Merge
+      const updatePayload = tiles.map((t: any) => ({
+        r: t.r,
+        c: t.c,
+        path: t.path
+      }));
+      
+      // Need original dimensions from splitRes? 
+      // Actually we have originalW and originalH calculated.
+      // But merge_img expects dimensions?
+      // Wait, originalW/H in TileGrid are full image dims.
+      // splitRes returned them too.
+      
+      const mergedB64: string = await invoke('merge_img', {
+        tiles: updatePayload,
+        originalW: originalW,
+        originalH: originalH,
+        overlapRatio: overlap
+      });
+      
+      resultSrc = mergedB64;
+  }
+
   async function processAll() {
     try {
       // 1. Split
@@ -86,76 +152,23 @@
       });
       
       tempDir = splitRes.temp_dir;
-      const tileFiles = splitRes.tiles;
+      // Map the paths from splitRes to our tiles array
+      // splitRes.tiles has same order if loops match.
+      // splitRes.tiles: {r, c, path, ...}
       
-      tiles = tiles.map(t => ({ ...t, status: 'processing' }));
-      
-      // 2. Process each tile with API
-      const apiKey = localStorage.getItem('gemini_api_key');
-      const model = localStorage.getItem('gemini_model') || 'gemini-3-pro-image-preview'; // Default as requested
-      const prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
-      
-      if (!apiKey) {
-        throw new Error("API Key not found. Please set it in Settings.");
+      // Update our tiles with paths
+      // We assume order is row-major.
+      let i = 0;
+      for (const resTile of splitRes.tiles) {
+          if (tiles[i]) tiles[i].path = resTile.path;
+          i++;
       }
-
-      await Promise.all(tileFiles.map(async (tile: any, index: number) => {
-         try {
-           // Read tile
-           const b64Data = await invoke('load_image', { path: tile.path }) as string;
-           
-           // Convert to Blob for API (helper in api.ts? Or manually here)
-           // generateImage expects Blob.
-           // Helper:
-           const res = await fetch(b64Data);
-           const blob = await res.blob();
-           
-           // Call API
-           // We need to handle potential rate limits. Sequential or parallel?
-           // Parallel is faster but might hit limits.
-           // Let's do parallel for now.
-           
-           const resultBlob = await generateImage(blob, prompt, model, apiKey);
-           
-           // Convert result Blob to Base64 to save
-           const reader = new FileReader();
-           reader.readAsDataURL(resultBlob); 
-           const resultB64 = await new Promise<string>(resolve => {
-             reader.onloadend = () => resolve(reader.result as string);
-           });
-           
-           // Save back to tile path (overwrite)
-           await invoke('save_image', { path: tile.path, base64Data: resultB64 });
-           
-           // Update status
-           tiles[index].status = 'done';
-           // Trigger reactivity?
-           tiles = [...tiles];
-           
-         } catch (err) {
-           console.error(`Error processing tile ${tile.r},${tile.c}`, err);
-           tiles[index].status = 'error';
-           tiles = [...tiles];
-           // Don't throw to allow partial success? Or throw?
-           // For now log.
-         }
-      }));
+      
+      // 2. Process
+      await Promise.all(tiles.map((_, index) => processSingleTile(index)));
       
       // 3. Merge
-      const updatePayload = tileFiles.map((t: any) => ({
-        r: t.r,
-        c: t.c,
-        path: t.path
-      }));
-      
-      const mergedB64: string = await invoke('merge_img', {
-        tiles: updatePayload,
-        originalW: splitRes.original_width,
-        originalH: splitRes.original_height,
-        overlapRatio: overlap
-      });
-      
-      resultSrc = mergedB64;
+      await mergeAll();
       
     } catch (e) {
       console.error(e);
@@ -182,8 +195,9 @@
     calculateGrid();
   }
   
-  function regenerateTile(tile: any) {
-    alert(`Regenerating tile ${tile.r},${tile.c} (Not implemented fully yet, use Process All)`);
+  async function regenerateTile(index: number) {
+    await processSingleTile(index);
+    await mergeAll();
   }
 </script>
 
@@ -206,7 +220,9 @@
            {#each tiles as tile}
              <rect 
                x={tile.x} y={tile.y} width={tile.w} height={tile.h} 
-               fill="none" stroke={tile.status === 'processing' ? 'yellow' : tile.status === 'done' ? 'green' : 'rgba(255, 255, 255, 0.5)'} stroke-width="2"
+               fill="none" 
+               stroke={tile.status === 'processing' ? '#fbbf24' : tile.status === 'done' ? '#4ade80' : tile.status === 'error' ? '#ef4444' : 'rgba(255, 255, 255, 0.5)'} 
+               stroke-width="2"
              />
            {/each}
         </svg>
@@ -215,18 +231,24 @@
       <!-- Interactive Layer -->
       {#if tiles.length > 0}
          <div class="absolute inset-0">
-           {#each tiles as tile}
+           {#each tiles as tile, index}
              <!-- svelte-ignore a11y-click-events-have-key-events -->
              <div 
                role="button"
                tabindex="0"
-               class="absolute hover:bg-blue-500 hover:bg-opacity-20 cursor-pointer group transition-colors border border-transparent hover:border-blue-400"
+               class="absolute group transition-colors border border-transparent hover:border-blue-400 hover:bg-blue-500/20 flex items-center justify-center"
                style="left: {tile.x / originalW * 100}%; top: {tile.y / originalH * 100}%; width: {tile.w / originalW * 100}%; height: {tile.h / originalH * 100}%;"
-               on:click={() => regenerateTile(tile)}
              >
-                <div class="hidden group-hover:flex absolute top-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded shadow">
-                  Regenerate
-                </div>
+                {#if tile.status === 'processing'}
+                  <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+                {:else}
+                  <button 
+                    on:click|stopPropagation={() => regenerateTile(index)}
+                    class="hidden group-hover:block bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded shadow transform hover:scale-105 transition"
+                  >
+                    Regenerate
+                  </button>
+                {/if}
              </div>
            {/each}
          </div>
