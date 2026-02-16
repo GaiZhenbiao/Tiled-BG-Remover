@@ -16,15 +16,19 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-body {
+/* Ensure the body takes full height and never scrolls */
+html, body {
   margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
 }
 
-/* Removed generic button styles to allow Tailwind to control styling */
+body {
+  display: flex;
+  background-color: #111827; /* Matches gray-900 */
+}
 
 @media (prefers-color-scheme: light) {
   :root {
