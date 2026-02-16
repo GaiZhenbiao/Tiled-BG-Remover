@@ -183,8 +183,25 @@
       await splitImageAndAssignPaths();
       tiles = [...tiles]; 
       
-      await Promise.all(tiles.map((_, index) => processSingleTile(index)));
-      await mergeAll();
+      // Process with concurrency limit to prevent hanging
+      const CONCURRENCY = 2;
+      const queue = tiles.map((_, index) => index);
+      
+      const workers = Array(CONCURRENCY).fill(null).map(async () => {
+          while (queue.length > 0) {
+              const index = queue.shift();
+              if (index !== undefined) {
+                  if (!isProcessing) break;
+                  await processSingleTile(index);
+              }
+          }
+      });
+      
+      await Promise.all(workers);
+      
+      if (isProcessing) {
+         await mergeAll();
+      }
       
     } catch (e) {
       console.error(e);
