@@ -7,11 +7,13 @@
   let apiKey = localStorage.getItem('gemini_api_key') || '';
   let modelName = localStorage.getItem('gemini_model') || 'gemini-1.5-pro';
   let prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
+  let useTestMode = localStorage.getItem('gemini_test_mode') === 'true';
   
   function save() {
     localStorage.setItem('gemini_api_key', apiKey);
     localStorage.setItem('gemini_model', modelName);
     localStorage.setItem('gemini_prompt', prompt);
+    localStorage.setItem('gemini_test_mode', String(useTestMode));
     dispatch('close');
   }
 </script>
@@ -31,9 +33,14 @@
       </select>
     </div>
     
+    <div class="mb-4 flex items-center gap-2">
+      <input id="test-mode" type="checkbox" bind:checked={useTestMode} class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500">
+      <label for="test-mode" class="text-sm font-medium">{$t('settings.testMode')}</label>
+    </div>
+    
     <div class="mb-4">
       <label for="api-key" class="block text-sm font-medium mb-1">{$t('settings.apiKey')}</label>
-      <input id="api-key" type="password" bind:value={apiKey} class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white" placeholder="AIzaSy..." />
+      <input id="api-key" type="password" bind:value={apiKey} class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white" placeholder="AIzaSy..." disabled={useTestMode} />
     </div>
 
     <div class="mb-4">

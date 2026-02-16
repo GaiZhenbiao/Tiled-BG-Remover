@@ -24,7 +24,8 @@ const translations = {
       systemPrompt: "System Prompt",
       cancel: "Cancel",
       save: "Save",
-      experimental: "Experimental: try 'gemini-2.0-flash-exp' or 'gemini-3-pro-image-preview' if available."
+      experimental: "Experimental: try 'gemini-2.0-flash-exp' or 'gemini-3-pro-image-preview' if available.",
+      testMode: "Test Generation Mode (Mock)"
     }
   },
   zh: {
@@ -39,6 +40,7 @@ const translations = {
     processAll: "处理所有瓦片",
     processing: "处理中...",
     uploadInstruction: "点击或拖拽图片到此处",
+    generate: "生成",
     regenerate: "重新生成",
     settings: {
       title: "设置",
@@ -47,7 +49,8 @@ const translations = {
       systemPrompt: "系统提示词",
       cancel: "取消",
       save: "保存",
-      experimental: "实验性：如果可用，请尝试 'gemini-2.0-flash-exp' 或 'gemini-3-pro-image-preview'。"
+      experimental: "实验性：如果可用，请尝试 'gemini-2.0-flash-exp' 或 'gemini-3-pro-image-preview'。",
+      testMode: "测试生成模式 (模拟)"
     }
   },
   ja: {
@@ -62,6 +65,7 @@ const translations = {
     processAll: "すべてのタイルを処理",
     processing: "処理中...",
     uploadInstruction: "ここをクリックまたは画像をドロップ",
+    generate: "生成",
     regenerate: "再生成",
     settings: {
       title: "設定",
@@ -70,7 +74,8 @@ const translations = {
       systemPrompt: "システムプロンプト",
       cancel: "キャンセル",
       save: "保存",
-      experimental: "実験的：利用可能な場合は 'gemini-2.0-flash-exp' または 'gemini-3-pro-image-preview' を試してください。"
+      experimental: "実験的：利用可能な場合は 'gemini-2.0-flash-exp' または 'gemini-3-pro-image-preview' を試してください。",
+      testMode: "テスト生成モード (モック)"
     }
   }
 };

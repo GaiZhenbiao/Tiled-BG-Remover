@@ -64,5 +64,6 @@ npm run tauri dev
     - Setup GitHub Actions for CI/CD.
     - Fixed Image Display issues by switching to Base64 loading.
     - Implemented real API integration for background removal.
+    - Added "Test Generation Mode" (mock images) for debugging and cost-saving.
     - Restored Drag & Drop functionality.
     - Initialized `AGENTS.md`.

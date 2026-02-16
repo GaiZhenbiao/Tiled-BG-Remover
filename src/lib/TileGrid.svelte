@@ -2,6 +2,7 @@
   import { onMount, createEventDispatcher } from 'svelte';
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
   import { generateImage } from './api';
+  import { generateMockTile } from './mock_api';
   import { t } from '../lib/i18n';
 
   const dispatch = createEventDispatcher();
@@ -84,22 +85,31 @@
     tiles = [...tiles];
 
     try {
-        const apiKey = localStorage.getItem('gemini_api_key');
-        const model = localStorage.getItem('gemini_model') || 'gemini-3-pro-image-preview'; 
-        const prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
-        
-        if (!apiKey) throw new Error("API Key not found. Please set it in Settings.");
+        const useTestMode = localStorage.getItem('gemini_test_mode') === 'true';
+        let resultBlob: Blob;
 
-        // Read tile
-        const b64Data = await invoke('load_image', { path: tile.path }) as string;
-        
-        // Convert to Blob
-        const res = await fetch(b64Data);
-        const blob = await res.blob();
-        
-        // API Call
-        const resultBlob = await generateImage(blob, prompt, model, apiKey);
-        console.log(`API returned blob: ${resultBlob.size} bytes, type: ${resultBlob.type}`);
+        if (useTestMode) {
+            console.log("Using Test Mode (Mock)");
+            resultBlob = await generateMockTile(Math.round(tile.w), Math.round(tile.h), tile.r, tile.c);
+            await new Promise(r => setTimeout(r, 500));
+        } else {
+            const apiKey = localStorage.getItem('gemini_api_key');
+            const model = localStorage.getItem('gemini_model') || 'gemini-3-pro-image-preview'; 
+            const prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
+            
+            if (!apiKey) throw new Error("API Key not found. Please set it in Settings.");
+
+            // Read tile
+            const b64Data = await invoke('load_image', { path: tile.path }) as string;
+            
+            // Convert to Blob
+            const res = await fetch(b64Data);
+            const blob = await res.blob();
+            
+            // API Call
+            resultBlob = await generateImage(blob, prompt, model, apiKey);
+            console.log(`API returned blob: ${resultBlob.size} bytes, type: ${resultBlob.type}`);
+        }
         
         // Save
         const reader = new FileReader();
