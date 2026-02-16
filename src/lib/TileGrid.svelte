@@ -199,6 +199,7 @@
   }
 
   function handleImageLoad() {
+    if (resultSrc) return;
     calculateGrid();
   }
   
