@@ -121,18 +121,11 @@
   }
 
   async function mergeAll() {
-      // 3. Merge
       const updatePayload = tiles.map((t: any) => ({
         r: t.r,
         c: t.c,
         path: t.path
       }));
-      
-      // Need original dimensions from splitRes? 
-      // Actually we have originalW and originalH calculated.
-      // But merge_img expects dimensions?
-      // Wait, originalW/H in TileGrid are full image dims.
-      // splitRes returned them too.
       
       const mergedB64: string = await invoke('merge_img', {
         tiles: updatePayload,
@@ -145,9 +138,7 @@
       resultSrc = mergedB64;
   }
 
-  async function processAll() {
-    try {
-      // 1. Split
+  async function splitImageAndAssignPaths() {
       const splitRes: any = await invoke('split_img', {
         path: src,
         rows,
@@ -156,17 +147,19 @@
       });
       
       tempDir = splitRes.temp_dir;
-      // Map the paths from splitRes to our tiles array
-      // splitRes.tiles has same order if loops match.
-      // splitRes.tiles: {r, c, path, ...}
-      
-      // Update our tiles with paths
-      // We assume order is row-major.
       let i = 0;
       for (const resTile of splitRes.tiles) {
           if (tiles[i]) tiles[i].path = resTile.path;
           i++;
       }
+      return splitRes;
+  }
+
+  async function processAll() {
+    try {
+      // 1. Split
+      await splitImageAndAssignPaths();
+      tiles = [...tiles]; // Trigger update
       
       // 2. Process
       await Promise.all(tiles.map((_, index) => processSingleTile(index)));
@@ -200,6 +193,15 @@
   }
   
   async function regenerateTile(index: number) {
+    if (!tiles[index].path) {
+        try {
+            await splitImageAndAssignPaths();
+            tiles = [...tiles];
+        } catch (e) {
+            alert("Failed to prepare tiles: " + e);
+            return;
+        }
+    }
     await processSingleTile(index);
     await mergeAll();
   }
@@ -250,7 +252,7 @@
                     on:click|stopPropagation={() => regenerateTile(index)}
                     class="hidden group-hover:block bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded shadow transform hover:scale-105 transition"
                   >
-                    {$t('regenerate')}
+                    {tile.status === 'pending' ? $t('generate') : $t('regenerate')}
                   </button>
                 {/if}
              </div>
