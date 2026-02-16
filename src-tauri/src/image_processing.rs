@@ -241,3 +241,15 @@ fn blend_images(img1: &RgbaImage, img2: &RgbaImage, overlap: u32, horizontal: bo
         res
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_white() {
+        assert!(is_white(&Rgba([255, 255, 255, 255])));
+        assert!(is_white(&Rgba([0, 0, 0, 0]))); // Transparent
+        assert!(!is_white(&Rgba([255, 0, 0, 255]))); // Red
+    }
+}

@@ -4,6 +4,7 @@
   import TileGrid from '../lib/TileGrid.svelte';
   import Settings from '../lib/Settings.svelte';
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+  import { t } from '../lib/i18n';
 
   let imagePath = '';
   let showSettings = false;
@@ -25,6 +26,10 @@
      if (!imagePath) return;
      // Load image to get dims
      const img = new Image();
+     // We use load_image in TileGrid, here we just need dims. 
+     // Using convertFileSrc might fail if asset protocol restricted, but we configured fs:scope-home-recursive.
+     // However, simpler to just assume TileGrid handles display.
+     // For dimensions, we can try to load it.
      img.src = convertFileSrc(imagePath);
      await new Promise(r => img.onload = r);
      
@@ -44,7 +49,7 @@
   <!-- Header -->
   <header class="h-12 border-b border-gray-700 flex items-center justify-between px-4 bg-gray-800">
     <div class="font-bold text-lg flex items-center gap-2">
-      <span class="text-blue-400">Gemini</span> Tile Upscaler
+      <span class="text-blue-400">{$t('appTitle')}</span>
     </div>
     <div class="flex items-center gap-4">
       <button 
@@ -63,33 +68,33 @@
     <aside class="w-64 bg-gray-800 border-r border-gray-700 p-4 flex flex-col gap-6 overflow-y-auto">
       {#if imagePath}
         <div class="flex flex-col gap-2">
-          <label for="tools-label" class="text-xs font-semibold text-gray-400 uppercase">Tools</label>
+          <label for="tools-label" class="text-xs font-semibold text-gray-400 uppercase">{$t('tools')}</label>
           <button id="tools-label" on:click={cropToSquare} class="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1 rounded">
-            Crop to Square (Center)
+            {$t('cropSquare')}
           </button>
         </div>
 
         <div class="flex flex-col gap-2">
-          <label for="grid-rows" class="text-xs font-semibold text-gray-400 uppercase">Grid Layout</label>
+          <label for="grid-rows" class="text-xs font-semibold text-gray-400 uppercase">{$t('gridLayout')}</label>
           <div class="flex gap-2 items-center">
-            <span class="w-8 text-sm">Rows</span>
+            <span class="w-8 text-sm">{$t('rows')}</span>
             <input id="grid-rows" type="range" min="1" max="8" bind:value={rows} class="flex-1 accent-blue-500">
             <span class="w-4 text-sm text-right">{rows}</span>
           </div>
           <div class="flex gap-2 items-center">
-            <span class="w-8 text-sm">Cols</span>
+            <span class="w-8 text-sm">{$t('cols')}</span>
             <input id="grid-cols" type="range" min="1" max="8" bind:value={cols} class="flex-1 accent-blue-500">
             <span class="w-4 text-sm text-right">{cols}</span>
           </div>
         </div>
 
         <div class="flex flex-col gap-2">
-          <label for="overlap-slider" class="text-xs font-semibold text-gray-400 uppercase">Overlap ({Math.round(overlap*100)}%)</label>
+          <label for="overlap-slider" class="text-xs font-semibold text-gray-400 uppercase">{$t('overlap')} ({Math.round(overlap*100)}%)</label>
           <input id="overlap-slider" type="range" min="0" max="0.5" step="0.05" bind:value={overlap} class="accent-blue-500">
         </div>
         
         <div class="flex flex-col gap-2">
-          <label for="tile-res-select" class="text-xs font-semibold text-gray-400 uppercase">Tile Resolution</label>
+          <label for="tile-res-select" class="text-xs font-semibold text-gray-400 uppercase">{$t('tileRes')}</label>
           <select id="tile-res-select" bind:value={tileRes} class="bg-gray-700 border border-gray-600 rounded p-1 text-sm">
             <option value={512}>512 x 512</option>
             <option value={1024}>1024 x 1024</option>
@@ -104,7 +109,7 @@
           class="bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={isProcessing}
         >
-          {isProcessing ? 'Processing...' : 'Process All Tiles'}
+          {isProcessing ? $t('processing') : $t('processAll')}
         </button>
       {/if}
     </aside>

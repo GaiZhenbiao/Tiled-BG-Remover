@@ -2,6 +2,7 @@
   import { onMount, createEventDispatcher } from 'svelte';
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
   import { generateImage } from './api';
+  import { t } from '../lib/i18n';
 
   const dispatch = createEventDispatcher();
 
@@ -98,6 +99,7 @@
         
         // API Call
         const resultBlob = await generateImage(blob, prompt, model, apiKey);
+        console.log(`API returned blob: ${resultBlob.size} bytes, type: ${resultBlob.type}`);
         
         // Save
         const reader = new FileReader();
@@ -107,6 +109,7 @@
         });
         
         await invoke('save_image', { path: tile.path, base64Data: resultB64 });
+        console.log(`Saved updated tile to ${tile.path}`);
         
         tiles[index].status = 'done';
     } catch (e) {
@@ -138,6 +141,7 @@
         overlapRatio: overlap
       });
       
+      console.log(`Merged result size: ${mergedB64.length}`);
       resultSrc = mergedB64;
   }
 
@@ -246,7 +250,7 @@
                     on:click|stopPropagation={() => regenerateTile(index)}
                     class="hidden group-hover:block bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded shadow transform hover:scale-105 transition"
                   >
-                    Regenerate
+                    {$t('regenerate')}
                   </button>
                 {/if}
              </div>
