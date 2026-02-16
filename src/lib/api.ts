@@ -1,22 +1,28 @@
-export async function generateImage(imageBlob: Blob, prompt: string, model: string, apiKey: string): Promise<Blob> {
-  const reader = new FileReader();
-  reader.readAsDataURL(imageBlob);
-  const base64Data = await new Promise<string>((resolve) => {
-    reader.onloadend = () => resolve(reader.result as string);
-  });
-  // Strip prefix data:image/...;base64,
-  const base64Image = base64Data.split(',')[1];
-  const mimeType = base64Data.split(';')[0].split(':')[1];
-
+export async function generateImage(imageBlob: Blob | null, prompt: string, model: string, apiKey: string): Promise<Blob> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  
+  let parts: any[] = [{ text: prompt }];
+
+  if (imageBlob) {
+      const reader = new FileReader();
+      reader.readAsDataURL(imageBlob);
+      const base64Data = await new Promise<string>((resolve) => {
+        reader.onloadend = () => resolve(reader.result as string);
+      });
+      // Strip prefix data:image/...;base64,
+      const base64Image = base64Data.split(',')[1];
+      const mimeType = base64Data.split(';')[0].split(':')[1];
+      
+      parts = [
+        { inline_data: { mime_type: mimeType, data: base64Image } },
+        { text: prompt }
+      ];
+  }
   
   const payload = {
     contents: [{
       role: "user",
-      parts: [
-        { inline_data: { mime_type: mimeType, data: base64Image } },
-        { text: prompt }
-      ]
+      parts: parts
     }],
     generationConfig: {
       temperature: 0.4,
@@ -25,7 +31,7 @@ export async function generateImage(imageBlob: Blob, prompt: string, model: stri
     }
   };
 
-  console.log(`Sending request to ${model} with prompt: "${prompt}"`);
+  console.log(`Sending request to ${model} with prompt: "${prompt}" (Has Image: ${!!imageBlob})`);
 
   const response = await fetch(url, {
     method: 'POST',

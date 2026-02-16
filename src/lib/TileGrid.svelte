@@ -85,29 +85,34 @@
     tiles = [...tiles];
 
     try {
-        const useTestMode = localStorage.getItem('gemini_test_mode') === 'true';
+        const operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
         let resultBlob: Blob;
 
-        if (useTestMode) {
-            console.log("Using Test Mode (Mock)");
+        if (operationMode === 'mock') {
+            console.log("Mode: Mock (Local Noise)");
             resultBlob = await generateMockTile(Math.round(tile.w), Math.round(tile.h), tile.r, tile.c);
             await new Promise(r => setTimeout(r, 500));
         } else {
             const apiKey = localStorage.getItem('gemini_api_key');
             const model = localStorage.getItem('gemini_model') || 'gemini-3-pro-image-preview'; 
-            const prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
             
             if (!apiKey) throw new Error("API Key not found. Please set it in Settings.");
 
-            // Read tile
-            const b64Data = await invoke('load_image', { path: tile.path }) as string;
-            
-            // Convert to Blob
-            const res = await fetch(b64Data);
-            const blob = await res.blob();
+            let prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
+            let inputBlob: Blob | null = null;
+
+            if (operationMode === 'test_t2i') {
+                console.log("Mode: Test (AI Text-to-Image)");
+                prompt = `Generate a beautiful scenery with a big, black text saying '(${tile.r},${tile.c})' in the center.`;
+            } else {
+                console.log("Mode: Default (Image-to-Image)");
+                const b64Data = await invoke('load_image', { path: tile.path }) as string;
+                const res = await fetch(b64Data);
+                inputBlob = await res.blob();
+            }
             
             // API Call
-            resultBlob = await generateImage(blob, prompt, model, apiKey);
+            resultBlob = await generateImage(inputBlob, prompt, model, apiKey);
             console.log(`API returned blob: ${resultBlob.size} bytes, type: ${resultBlob.type}`);
         }
         
