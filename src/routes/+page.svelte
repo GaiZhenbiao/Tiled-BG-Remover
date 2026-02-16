@@ -94,7 +94,7 @@
     selectedModel = localStorage.getItem('gemini_model') || 'gemini-1.5-pro';
   }
 
-  $: availableResolutions = (selectedModel.includes('gemini-3-pro') || selectedModel.includes('gemini-2.5')) 
+  $: availableResolutions = selectedModel.includes('gemini-3-pro') 
     ? [1024, 2048, 4096] 
     : [1024];
 
