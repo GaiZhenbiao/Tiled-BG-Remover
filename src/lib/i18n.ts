@@ -15,6 +15,7 @@ const translations = {
     processAll: "Process All Tiles",
     processing: "Processing...",
     uploadInstruction: "Click or Drop Image Here",
+    generate: "Generate",
     regenerate: "Regenerate",
     settings: {
       title: "Settings",
