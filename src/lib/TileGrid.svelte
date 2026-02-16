@@ -12,25 +12,44 @@
   export let cols: number;
   export let overlap: number;
   export let isProcessing: boolean;
+  export let aiOutputRes: number;
+  export let resizeInputToOutput: boolean;
+  export let bgRemovalEnabled: boolean;
+  export let keyColor: string;
+  export let tolerance: number = 10;
+  export let resultSrc: string = '';
 
   let container: HTMLDivElement;
   let imgElement: HTMLImageElement;
   let displaySrc = '';
+  let isSplitting = false;
+  let isMerging = false;
   
   // Grid visualization state
   let tiles: any[] = [];
   
   // Result state
-  let resultSrc: string | null = null;
   let tempDir = '';
   let originalW = 0;
   let originalH = 0;
+
+  // Track previous settings to avoid infinite loops in reactive re-merge
+  let prevBG = bgRemovalEnabled;
+  let prevKey = keyColor;
+  let prevTol = tolerance;
   
   $: if (src) {
     loadImage(src);
-    resultSrc = null; // Reset result when source changes
+    resultSrc = ''; // Reset result when source changes
   }
   
+  $: if ((bgRemovalEnabled !== prevBG || keyColor !== prevKey || tolerance !== prevTol) && tiles.length > 0 && tiles.some(t => t.status === 'done') && !isProcessing && !isMerging) {
+      prevBG = bgRemovalEnabled;
+      prevKey = keyColor;
+      prevTol = tolerance;
+      mergeAll();
+  }
+
   async function loadImage(path: string) {
     try {
       const b64 = await invoke('load_image', { path });
@@ -91,24 +110,26 @@
         let resultBlob: Blob;
 
         if (operationMode === 'mock') {
-            console.log("Mode: Mock (Local Noise)");
-            resultBlob = await generateMockTile(Math.round(tile.w), Math.round(tile.h), tile.r, tile.c);
-            await new Promise(r => setTimeout(r, 500));
+            resultBlob = await generateMockTile(aiOutputRes, aiOutputRes, tile.r, tile.c);
+            await new Promise(r => setTimeout(r, 200));
         } else {
             const apiKey = localStorage.getItem('gemini_api_key');
-            const model = localStorage.getItem('gemini_model') || 'gemini-3-pro-image-preview'; 
+            const model = localStorage.getItem('gemini_model') || 'gemini-1.5-pro'; 
             
             if (!apiKey) throw new Error("API Key not found. Please set it in Settings.");
 
             let prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
+            
+            if (bgRemovalEnabled) {
+              prompt = `Remove the background and replace it with pure ${keyColor}. The background must be a solid, flat ${keyColor} color with no shadows, gradients or textures. The foreground object is part of a bicycle. Focus on clean edges.`;
+            }
+
             let inputBlob: Blob | null = null;
 
             if (operationMode === 'test_t2i') {
-                console.log("Mode: Test (AI Text-to-Image)");
                 prompt = `Generate a beautiful scenery with a big, black text saying '(${tile.r},${tile.c})' in the center.`;
             } else {
-                console.log("Mode: Default (Image-to-Image)");
-                // ALWAYS read from ORIGINAL path
+                // Read via Rust to bypass scope restrictions
                 const b64Data = await invoke('load_image', { path: tile.originalPath }) as string;
                 const res = await fetch(b64Data);
                 inputBlob = await res.blob();
@@ -116,7 +137,6 @@
             
             // API Call
             resultBlob = await generateImage(inputBlob, prompt, model, apiKey);
-            console.log(`API returned blob: ${resultBlob.size} bytes, type: ${resultBlob.type}`);
         }
         
         // Save result
@@ -126,11 +146,15 @@
              reader.onloadend = () => resolve(reader.result as string);
         });
         
-        await invoke('save_image_resized', { path: tile.path, base64Data: resultB64, width: Math.round(tile.w), height: Math.round(tile.h) });
-        console.log(`Saved updated tile to ${tile.path}`);
+        // Use resize if requested
+        if (resizeInputToOutput) {
+            await invoke('save_image_resized', { path: tile.path, base64Data: resultB64, width: Math.round(tile.w), height: Math.round(tile.h) });
+        } else {
+            await invoke('save_image', { path: tile.path, base64Data: resultB64 });
+        }
         
         tiles[index].status = 'done';
-        dispatch('log', { type: 'success', message: `Tile ${tile.r},${tile.c} processed successfully.` });
+        dispatch('log', { type: 'success', message: `Tile ${tile.r},${tile.c} processed.` });
     } catch (e: any) {
         console.error(`Error processing tile ${tile.r},${tile.c}`, e);
         tiles[index].status = 'error';
@@ -147,35 +171,51 @@
         path: t.path
       }));
       
-      const mergedB64: string = await invoke('merge_img', {
-        tiles: updatePayload,
-        originalW: originalW,
-        originalH: originalH,
-        overlapRatio: overlap
-      });
-      
-      console.log(`Merged result size: ${mergedB64.length}`);
-      resultSrc = mergedB64;
+      dispatch('log', { type: 'info', message: 'Merging tiles...' });
+      isMerging = true;
+      try {
+        const mergedB64: string = await invoke('merge_img', {
+            tiles: updatePayload,
+            originalW: Math.round(originalW),
+            originalH: Math.round(originalH),
+            overlapRatio: overlap,
+            keyColor: bgRemovalEnabled ? keyColor : 'white',
+            removeBg: bgRemovalEnabled,
+            tolerance: tolerance
+        });
+        
+        resultSrc = mergedB64;
+        dispatch('log', { type: 'success', message: 'Processing complete.' });
+      } finally {
+        isMerging = false;
+      }
   }
 
   async function splitImageAndAssignPaths() {
-      const splitRes: any = await invoke('split_img', {
-        path: src,
-        rows,
-        cols,
-        overlapRatio: overlap
-      });
-      
-      tempDir = splitRes.temp_dir;
-      let i = 0;
-      for (const resTile of splitRes.tiles) {
-          if (tiles[i]) {
-              tiles[i].path = resTile.path;
-              tiles[i].originalPath = resTile.original_path;
-          }
-          i++;
+      dispatch('log', { type: 'info', message: 'Splitting image into tiles...' });
+      isSplitting = true;
+      try {
+        const splitRes: any = await invoke('split_img', {
+          path: src,
+          rows,
+          cols,
+          overlapRatio: overlap
+        });
+        
+        tempDir = splitRes.temp_dir;
+        let i = 0;
+        for (const resTile of splitRes.tiles) {
+            if (tiles[i]) {
+                tiles[i].path = resTile.path;
+                tiles[i].originalPath = resTile.original_path;
+            }
+            i++;
+        }
+        dispatch('log', { type: 'success', message: 'Image split successfully.' });
+        return splitRes;
+      } finally {
+        isSplitting = false;
       }
-      return splitRes;
   }
 
   async function processAll() {
@@ -183,9 +223,9 @@
       await splitImageAndAssignPaths();
       tiles = [...tiles]; 
       
-      // Process with concurrency limit to prevent hanging
+      // Process with concurrency limit
       const CONCURRENCY = 2;
-      const queue = tiles.map((_, index) => index);
+      const queue = [...tiles.keys()];
       
       const workers = Array(CONCURRENCY).fill(null).map(async () => {
           while (queue.length > 0) {
@@ -203,25 +243,12 @@
          await mergeAll();
       }
       
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('Error processing: ' + e);
+      dispatch('log', { type: 'error', message: `Processing failed: ${e.message || e}` });
     } finally {
       isProcessing = false;
     }
-  }
-  
-  export async function cropCenter() {
-     if (!imgElement) return;
-     const size = Math.min(imgElement.naturalWidth, imgElement.naturalHeight);
-     const x = (imgElement.naturalWidth - size) / 2;
-     const y = (imgElement.naturalHeight - size) / 2;
-     
-     const newPath: string = await invoke('crop_img', {
-       path: src, x: Math.round(x), y: Math.round(y), width: Math.round(size), height: Math.round(size)
-     });
-     
-     dispatch('crop', newPath);
   }
 
   function handleImageLoad() {
@@ -246,7 +273,7 @@
 
 <div class="relative w-full h-full flex items-center justify-center overflow-auto" bind:this={container}>
   {#if displaySrc}
-    <div class="relative inline-block shadow-2xl">
+    <div class="relative inline-block shadow-2xl {bgRemovalEnabled ? 'checkerboard' : ''}">
       <!-- Main Image -->
       <img 
         src={resultSrc || displaySrc} 
@@ -264,8 +291,8 @@
              <rect 
                x={tile.x} y={tile.y} width={tile.w} height={tile.h} 
                fill="none" 
-               stroke={tile.status === 'processing' ? '#fbbf24' : tile.status === 'done' ? '#4ade80' : tile.status === 'error' ? '#ef4444' : 'rgba(255, 255, 255, 0.5)'} 
-               stroke-width="2"
+               stroke={tile.status === 'processing' ? '#fbbf24' : tile.status === 'done' ? (resultSrc ? 'rgba(74, 222, 128, 0.3)' : '#4ade80') : tile.status === 'error' ? '#ef4444' : 'rgba(255, 255, 255, 0.5)'} 
+               stroke-width={resultSrc ? "1" : "2"}
              />
            {/each}
         </svg>
@@ -274,6 +301,15 @@
       <!-- Interactive Layer -->
       {#if tiles.length > 0}
          <div class="absolute inset-0">
+           {#if isSplitting || isMerging}
+             <div class="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-10 backdrop-blur-[1px]">
+               <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-white mb-4"></div>
+               <span class="text-white font-bold bg-black/50 px-3 py-1 rounded">
+                 {isSplitting ? 'Splitting Image...' : 'Merging Tiles...'}
+               </span>
+             </div>
+           {/if}
+           
            {#each tiles as tile, index}
              <!-- svelte-ignore a11y-click-events-have-key-events -->
              <div 
@@ -284,7 +320,9 @@
                on:click={() => regenerateTile(index)}
              >
                 {#if tile.status === 'processing'}
-                  <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+                  <div class="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-[1px]">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+                  </div>
                 {:else}
                   <button 
                     on:click|stopPropagation={() => regenerateTile(index)}
@@ -300,3 +338,15 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .checkerboard {
+    background-image: linear-gradient(45deg, #333 25%, transparent 25%), 
+                      linear-gradient(-45deg, #333 25%, transparent 25%), 
+                      linear-gradient(45deg, transparent 75%, #333 75%), 
+                      linear-gradient(-45deg, transparent 75%, #333 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+    background-color: #222;
+  }
+</style>

@@ -49,35 +49,35 @@ fn save_image_resized(path: String, base64_data: String, width: u32, height: u32
 }
 
 #[tauri::command]
-fn split_img(
-    state: tauri::State<AppState>,
+async fn split_img(
+    state: tauri::State<'_, AppState>,
     path: String,
     rows: u32,
     cols: u32,
     overlap_ratio: f64
 ) -> Result<SplitResponse, String> {
-    // Create temp dir if not exists (or new one for each split? Better to reuse or new)
-    // Actually, let's create a new one for each split to keep it clean.
-    // But we need to keep it alive so files aren't deleted.
-    // We store it in state.
+    let path_clone = path.clone();
+    
+    // Offload heavy image processing to a blocking thread
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let td = TempDir::new().map_err(|e| e.to_string())?;
+        let td_path = td.path().to_path_buf();
+        
+        let (tiles, w, h) = split_image(&path_clone, rows, cols, overlap_ratio, &td_path)?;
+        
+        Ok::<_, String>((td, tiles, w, h, td_path))
+    }).await.map_err(|e| e.to_string())??;
+    
+    let (td, tiles, w, h, td_path_buf) = result;
     
     let mut state_temp = state.temp_dir.lock().map_err(|_| "Failed to lock state".to_string())?;
-    
-    // Create new temp dir
-    let td = TempDir::new().map_err(|e| e.to_string())?;
-    let td_path = td.path().to_path_buf();
-    
-    // Process
-    let (tiles, w, h) = split_image(&path, rows, cols, overlap_ratio, &td_path)?;
-    
-    // Store temp dir to prevent cleanup
     *state_temp = Some(td);
     
     Ok(SplitResponse {
         tiles,
         original_width: w,
         original_height: h,
-        temp_dir: td_path.to_string_lossy().to_string(),
+        temp_dir: td_path_buf.to_string_lossy().to_string(),
     })
 }
 
@@ -89,14 +89,20 @@ struct TileUpdate {
 }
 
 #[tauri::command]
-fn merge_img(
+async fn merge_img(
     tiles: Vec<TileUpdate>,
     original_w: u32,
     original_h: u32,
-    overlap_ratio: f64
+    overlap_ratio: f64,
+    key_color: String,
+    remove_bg: bool,
+    tolerance: u8,
 ) -> Result<String, String> {
-    let tile_tuples: Vec<(u32, u32, String)> = tiles.into_iter().map(|t| (t.r, t.c, t.path)).collect();
-    merge_tiles(tile_tuples, original_w, original_h, overlap_ratio)
+    // Offload merging to blocking thread
+    tauri::async_runtime::spawn_blocking(move || {
+        let tile_tuples: Vec<(u32, u32, String)> = tiles.into_iter().map(|t| (t.r, t.c, t.path)).collect();
+        merge_tiles(tile_tuples, original_w, original_h, overlap_ratio, &key_color, remove_bg, tolerance)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -119,6 +125,14 @@ fn crop_img(
     image_processing::crop_image(&path, x, y, width, height, &td_path)
 }
 
+#[tauri::command]
+fn save_merged_image(path: String, base64_data: String) -> Result<(), String> {
+    let data_str = base64_data.split(",").last().unwrap_or(&base64_data);
+    let data = general_purpose::STANDARD.decode(data_str).map_err(|e| e.to_string())?;
+    fs::write(path, data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -126,7 +140,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AppState { temp_dir: Mutex::new(None) })
-        .invoke_handler(tauri::generate_handler![split_img, merge_img, crop_img, load_image, save_image, save_image_resized])
+        .invoke_handler(tauri::generate_handler![split_img, merge_img, crop_img, load_image, save_image, save_image_resized, save_merged_image])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

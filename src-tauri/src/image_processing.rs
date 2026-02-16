@@ -15,12 +15,27 @@ pub struct TileInfo {
     pub original_path: String,  // Path for the original source tile
 }
 
-// Helper: Check if pixel is white or transparent
-fn is_white(p: &Rgba<u8>) -> bool {
+// Helper: Check if pixel matches key color
+fn is_key_color(p: &Rgba<u8>, color: &str, tolerance: u8) -> bool {
     if p[3] < 10 {
         return true;
     }
-    p[0] >= 250 && p[1] >= 250 && p[2] >= 250
+    
+    // Default strict thresholds
+    let white_min = 240u8.saturating_sub(tolerance);
+    let black_max = 15u8.saturating_add(tolerance);
+    
+    let color_min = 240u8.saturating_sub(tolerance);
+    let color_max = 50u8.saturating_add(tolerance);
+
+    match color {
+        "white" => p[0] >= white_min && p[1] >= white_min && p[2] >= white_min,
+        "black" => p[0] <= black_max && p[1] <= black_max && p[2] <= black_max,
+        "red" => p[0] >= color_min && p[1] <= color_max && p[2] <= color_max,
+        "blue" => p[0] <= color_max && p[1] <= color_max && p[2] >= color_min,
+        "green" => p[0] <= color_max && p[1] >= color_min && p[2] <= color_max,
+        _ => p[0] >= white_min && p[1] >= white_min && p[2] >= white_min, // Default white
+    }
 }
 
 pub fn crop_image(input_path: &str, x: u32, y: u32, width: u32, height: u32, output_dir: &Path) -> Result<String, String> {
@@ -68,7 +83,11 @@ pub fn split_image(
             let x = c * (tile_w - overlap_w);
             let y = r * (tile_h - overlap_h);
 
-            let tile = img.crop_imm(x, y, tile_w, tile_h);
+            // Ensure we don't exceed image dimensions
+            let actual_w = tile_w.min(w - x);
+            let actual_h = tile_h.min(h - y);
+
+            let tile = img.crop_imm(x, y, actual_w, actual_h);
 
             // Save original tile
             let orig_file_name = format!("orig_tile_{}_{}.png", r, c);
@@ -100,6 +119,9 @@ pub fn merge_tiles(
     _original_w: u32,
     _original_h: u32,
     overlap_ratio: f64,
+    key_color: &str,
+    remove_bg: bool,
+    tolerance: u8,
 ) -> Result<String, String> {
     let max_r = tile_paths.iter().map(|(r, _, _)| *r).max().unwrap_or(0);
     let max_c = tile_paths.iter().map(|(_, c, _)| *c).max().unwrap_or(0);
@@ -111,11 +133,8 @@ pub fn merge_tiles(
     let mut first_tile_h = 0;
 
     for (r, c, path) in tile_paths {
-        // If processed tile doesn't exist yet (not generated), use original tile for merge or treat as white?
-        // Since we want to accumulate, we should use processed if exists, else original.
         let mut final_path = path.clone();
         if !std::path::Path::new(&path).exists() {
-            // Check if original exists (should if split was called)
             let dir = std::path::Path::new(&path).parent().unwrap();
             let orig_path = dir.join(format!("orig_tile_{}_{}.png", r, c));
             if orig_path.exists() {
@@ -139,14 +158,22 @@ pub fn merge_tiles(
         let mut row_img = tile_map.get(&(r, 0)).ok_or(format!("Missing tile {},0", r))?.clone();
         for c in 1..cols {
             let next_tile = tile_map.get(&(r, c)).ok_or(format!("Missing tile {},{}", r, c))?;
-            row_img = blend_images(&row_img, next_tile, overlap_w, true);
+            row_img = blend_images(&row_img, next_tile, overlap_w, true, key_color, tolerance);
         }
         row_imgs.push(row_img);
     }
 
     let mut final_img = row_imgs[0].clone();
     for r in 1..rows {
-        final_img = blend_images(&final_img, &row_imgs[r as usize], overlap_h, false);
+        final_img = blend_images(&final_img, &row_imgs[r as usize], overlap_h, false, key_color, tolerance);
+    }
+
+    if remove_bg {
+        for pixel in final_img.pixels_mut() {
+            if is_key_color(pixel, key_color, tolerance) {
+                *pixel = Rgba([0, 0, 0, 0]);
+            }
+        }
     }
 
     let mut buffer = Cursor::new(Vec::new());
@@ -156,7 +183,7 @@ pub fn merge_tiles(
     Ok(format!("data:image/png;base64,{}", b64))
 }
 
-fn blend_images(img1: &RgbaImage, img2: &RgbaImage, overlap: u32, horizontal: bool) -> RgbaImage {
+fn blend_images(img1: &RgbaImage, img2: &RgbaImage, overlap: u32, horizontal: bool, key_color: &str, tolerance: u8) -> RgbaImage {
     let (w1, h1) = img1.dimensions();
     let (w2, h2) = img2.dimensions();
 
@@ -182,21 +209,24 @@ fn blend_images(img1: &RgbaImage, img2: &RgbaImage, overlap: u32, horizontal: bo
                 let p1 = img1.get_pixel(w1 - overlap + x, y);
                 let p2 = img2.get_pixel(x, y);
 
-                let p1_white = is_white(p1);
-                let p2_white = is_white(p2);
+                let p1_key = is_key_color(p1, key_color, tolerance);
+                let p2_key = is_key_color(p2, key_color, tolerance);
 
-                let pixel = if p1_white && !p2_white {
+                let pixel = if p1_key && !p2_key {
                     *p2
-                } else if !p1_white && p2_white {
+                } else if !p1_key && p2_key {
                     *p1
-                } else if !p1_white && !p2_white {
+                } else if !p1_key && !p2_key {
                     let alpha = x as f32 / overlap as f32;
                     let r = ((1.0 - alpha) * p1[0] as f32 + alpha * p2[0] as f32) as u8;
                     let g = ((1.0 - alpha) * p1[1] as f32 + alpha * p2[1] as f32) as u8;
                     let b = ((1.0 - alpha) * p1[2] as f32 + alpha * p2[2] as f32) as u8;
-                    Rgba([r, g, b, 255])
+                    let a = ((1.0 - alpha) * p1[3] as f32 + alpha * p2[3] as f32) as u8;
+                    Rgba([r, g, b, a])
                 } else {
-                    Rgba([255, 255, 255, 255])
+                    // Both are key color, use key color or transparent?
+                    // For now, use p2.
+                    *p2
                 };
                 res.put_pixel(w1 - overlap + x, y, pixel);
             }
@@ -224,21 +254,22 @@ fn blend_images(img1: &RgbaImage, img2: &RgbaImage, overlap: u32, horizontal: bo
                 let p1 = img1.get_pixel(x, h1 - overlap + y);
                 let p2 = img2.get_pixel(x, y);
 
-                let p1_white = is_white(p1);
-                let p2_white = is_white(p2);
+                let p1_key = is_key_color(p1, key_color, tolerance);
+                let p2_key = is_key_color(p2, key_color, tolerance);
 
-                let pixel = if p1_white && !p2_white {
+                let pixel = if p1_key && !p2_key {
                     *p2
-                } else if !p1_white && p2_white {
+                } else if !p1_key && p2_key {
                     *p1
-                } else if !p1_white && !p2_white {
+                } else if !p1_key && !p2_key {
                     let alpha = y as f32 / overlap as f32;
                     let r = ((1.0 - alpha) * p1[0] as f32 + alpha * p2[0] as f32) as u8;
                     let g = ((1.0 - alpha) * p1[1] as f32 + alpha * p2[1] as f32) as u8;
                     let b = ((1.0 - alpha) * p1[2] as f32 + alpha * p2[2] as f32) as u8;
-                    Rgba([r, g, b, 255])
+                    let a = ((1.0 - alpha) * p1[3] as f32 + alpha * p2[3] as f32) as u8;
+                    Rgba([r, g, b, a])
                 } else {
-                    Rgba([255, 255, 255, 255])
+                    *p2
                 };
                 res.put_pixel(x, h1 - overlap + y, pixel);
             }

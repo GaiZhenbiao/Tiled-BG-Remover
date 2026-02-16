@@ -12,7 +12,7 @@
     "fs:allow-exists",
     {
       "identifier": "fs:scope",
-      "allow": ["**"]
+      "allow": ["$HOME/**", "$TEMP/**", "$DOWNLOAD/**", "/var/folders/**"]
     }
   ]
 }
