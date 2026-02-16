@@ -11,28 +11,26 @@ pub struct TileInfo {
     pub y: u32,
     pub width: u32,
     pub height: u32,
-    pub path: String,
+    pub path: String,           // Path for the processed tile
+    pub original_path: String,  // Path for the original source tile
 }
 
 // Helper: Check if pixel is white or transparent
 fn is_white(p: &Rgba<u8>) -> bool {
-    // Check alpha (transparency)
     if p[3] < 10 {
         return true;
     }
-    // Check white
     p[0] >= 250 && p[1] >= 250 && p[2] >= 250
 }
 
 pub fn crop_image(input_path: &str, x: u32, y: u32, width: u32, height: u32, output_dir: &Path) -> Result<String, String> {
-    let mut img = image::open(input_path).map_err(|e| e.to_string())?;
+    let img = image::open(input_path).map_err(|e| e.to_string())?;
     let cropped = img.crop_imm(x, y, width, height);
     
     let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
     let file_name = format!("cropped_{}.png", timestamp);
     let file_path = output_dir.join(&file_name);
     
-    // Fix: Use to_rgba8() instead of to_image()
     cropped.to_rgba8().save_with_format(&file_path, ImageFormat::Png).map_err(|e| e.to_string())?;
     
     Ok(file_path.to_string_lossy().to_string())
@@ -70,16 +68,16 @@ pub fn split_image(
             let x = c * (tile_w - overlap_w);
             let y = r * (tile_h - overlap_h);
 
-            // Ensure we don't go out of bounds, though crop handles it usually
-            // But we want consistent tile size if possible, or handle edge cases.
-            // image::crop returns a view, converting to image copies it.
             let tile = img.crop_imm(x, y, tile_w, tile_h);
 
-            // Save tile
-            let file_name = format!("tile_{}_{}.png", r, c);
-            let file_path = output_dir.join(&file_name);
-            // Fix: Use to_rgba8() instead of to_image()
-            tile.to_rgba8().save_with_format(&file_path, ImageFormat::Png).map_err(|e| e.to_string())?;
+            // Save original tile
+            let orig_file_name = format!("orig_tile_{}_{}.png", r, c);
+            let orig_file_path = output_dir.join(&orig_file_name);
+            tile.to_rgba8().save_with_format(&orig_file_path, ImageFormat::Png).map_err(|e| e.to_string())?;
+
+            // Prepare path for processed tile result
+            let proc_file_name = format!("tile_{}_{}.png", r, c);
+            let proc_file_path = output_dir.join(&proc_file_name);
 
             tiles.push(TileInfo {
                 r,
@@ -88,7 +86,8 @@ pub fn split_image(
                 y,
                 width: tile.width(),
                 height: tile.height(),
-                path: file_path.to_string_lossy().to_string(),
+                path: proc_file_path.to_string_lossy().to_string(),
+                original_path: orig_file_path.to_string_lossy().to_string(),
             });
         }
     }
@@ -102,19 +101,29 @@ pub fn merge_tiles(
     _original_h: u32,
     overlap_ratio: f64,
 ) -> Result<String, String> {
-    // Determine grid size
     let max_r = tile_paths.iter().map(|(r, _, _)| *r).max().unwrap_or(0);
     let max_c = tile_paths.iter().map(|(_, c, _)| *c).max().unwrap_or(0);
     let rows = max_r + 1;
     let cols = max_c + 1;
 
-    // Load all tiles
     let mut tile_map = std::collections::HashMap::new();
     let mut first_tile_w = 0;
     let mut first_tile_h = 0;
 
     for (r, c, path) in tile_paths {
-        let img = image::open(&path).map_err(|e| format!("Failed to open {}: {}", path, e))?.to_rgba8();
+        // If processed tile doesn't exist yet (not generated), use original tile for merge or treat as white?
+        // Since we want to accumulate, we should use processed if exists, else original.
+        let mut final_path = path.clone();
+        if !std::path::Path::new(&path).exists() {
+            // Check if original exists (should if split was called)
+            let dir = std::path::Path::new(&path).parent().unwrap();
+            let orig_path = dir.join(format!("orig_tile_{}_{}.png", r, c));
+            if orig_path.exists() {
+                final_path = orig_path.to_string_lossy().to_string();
+            }
+        }
+
+        let img = image::open(&final_path).map_err(|e| format!("Failed to open {}: {}", final_path, e))?.to_rgba8();
         if r == 0 && c == 0 {
             first_tile_w = img.width();
             first_tile_h = img.height();
@@ -125,7 +134,6 @@ pub fn merge_tiles(
     let overlap_w = (first_tile_w as f64 * overlap_ratio) as u32;
     let overlap_h = (first_tile_h as f64 * overlap_ratio) as u32;
 
-    // Stitch rows
     let mut row_imgs = Vec::new();
     for r in 0..rows {
         let mut row_img = tile_map.get(&(r, 0)).ok_or(format!("Missing tile {},0", r))?.clone();
@@ -136,13 +144,11 @@ pub fn merge_tiles(
         row_imgs.push(row_img);
     }
 
-    // Stitch cols
     let mut final_img = row_imgs[0].clone();
     for r in 1..rows {
         final_img = blend_images(&final_img, &row_imgs[r as usize], overlap_h, false);
     }
 
-    // Convert to base64 to return
     let mut buffer = Cursor::new(Vec::new());
     final_img.write_to(&mut buffer, ImageFormat::Png).map_err(|e| e.to_string())?;
     
@@ -159,21 +165,17 @@ fn blend_images(img1: &RgbaImage, img2: &RgbaImage, overlap: u32, horizontal: bo
         let res_h = h1.max(h2);
         let mut res = RgbaImage::from_pixel(res_w, res_h, Rgba([255, 255, 255, 255]));
 
-        // Copy non-overlapping parts
-        // Img1 left
         for y in 0..h1 {
             for x in 0..(w1 - overlap) {
                 res.put_pixel(x, y, *img1.get_pixel(x, y));
             }
         }
-        // Img2 right
         for y in 0..h2 {
-            for x in 0..(w2 - overlap) { // overlap to end
+            for x in 0..(w2 - overlap) {
                  res.put_pixel(w1 + x, y, *img2.get_pixel(overlap + x, y));
             }
         }
 
-        // Blend overlap
         let common_h = h1.min(h2);
         for y in 0..common_h {
             for x in 0..overlap {
@@ -188,13 +190,10 @@ fn blend_images(img1: &RgbaImage, img2: &RgbaImage, overlap: u32, horizontal: bo
                 } else if !p1_white && p2_white {
                     *p1
                 } else if !p1_white && !p2_white {
-                    // Blend
                     let alpha = x as f32 / overlap as f32;
                     let r = ((1.0 - alpha) * p1[0] as f32 + alpha * p2[0] as f32) as u8;
                     let g = ((1.0 - alpha) * p1[1] as f32 + alpha * p2[1] as f32) as u8;
                     let b = ((1.0 - alpha) * p1[2] as f32 + alpha * p2[2] as f32) as u8;
-                    // Use max alpha? Or average? 
-                    // Usually alpha blending. Here inputs are opaque-ish.
                     Rgba([r, g, b, 255])
                 } else {
                     Rgba([255, 255, 255, 255])
@@ -204,7 +203,6 @@ fn blend_images(img1: &RgbaImage, img2: &RgbaImage, overlap: u32, horizontal: bo
         }
         res
     } else {
-        // Vertical
         let res_w = w1.max(w2);
         let res_h = h1 + h2 - overlap;
         let mut res = RgbaImage::from_pixel(res_w, res_h, Rgba([255, 255, 255, 255]));
@@ -256,7 +254,7 @@ mod tests {
     #[test]
     fn test_is_white() {
         assert!(is_white(&Rgba([255, 255, 255, 255])));
-        assert!(is_white(&Rgba([0, 0, 0, 0]))); // Transparent
-        assert!(!is_white(&Rgba([255, 0, 0, 255]))); // Red
+        assert!(is_white(&Rgba([0, 0, 0, 0]))); 
+        assert!(!is_white(&Rgba([255, 0, 0, 255]))); 
     }
 }

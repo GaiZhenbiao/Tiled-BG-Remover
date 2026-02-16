@@ -71,7 +71,9 @@
         const y = r * (tileH - overlapH);
         tiles.push({
           r, c, x, y, w: tileW, h: tileH,
-          status: 'pending'
+          status: 'pending',
+          path: '',          // Target path for results
+          originalPath: ''   // Source path for input
         });
       }
     }
@@ -106,7 +108,8 @@
                 prompt = `Generate a beautiful scenery with a big, black text saying '(${tile.r},${tile.c})' in the center.`;
             } else {
                 console.log("Mode: Default (Image-to-Image)");
-                const b64Data = await invoke('load_image', { path: tile.path }) as string;
+                // ALWAYS read from ORIGINAL path
+                const b64Data = await invoke('load_image', { path: tile.originalPath }) as string;
                 const res = await fetch(b64Data);
                 inputBlob = await res.blob();
             }
@@ -116,7 +119,7 @@
             console.log(`API returned blob: ${resultBlob.size} bytes, type: ${resultBlob.type}`);
         }
         
-        // Save
+        // Save result
         const reader = new FileReader();
         reader.readAsDataURL(resultBlob); 
         const resultB64 = await new Promise<string>(resolve => {
@@ -166,7 +169,10 @@
       tempDir = splitRes.temp_dir;
       let i = 0;
       for (const resTile of splitRes.tiles) {
-          if (tiles[i]) tiles[i].path = resTile.path;
+          if (tiles[i]) {
+              tiles[i].path = resTile.path;
+              tiles[i].originalPath = resTile.original_path;
+          }
           i++;
       }
       return splitRes;
@@ -174,14 +180,10 @@
 
   async function processAll() {
     try {
-      // 1. Split
       await splitImageAndAssignPaths();
-      tiles = [...tiles]; // Trigger update
+      tiles = [...tiles]; 
       
-      // 2. Process
       await Promise.all(tiles.map((_, index) => processSingleTile(index)));
-      
-      // 3. Merge
       await mergeAll();
       
     } catch (e) {
@@ -262,6 +264,7 @@
                tabindex="0"
                class="absolute group transition-colors border border-transparent hover:border-blue-400 hover:bg-blue-500/20 flex items-center justify-center"
                style="left: {tile.x / originalW * 100}%; top: {tile.y / originalH * 100}%; width: {tile.w / originalW * 100}%; height: {tile.h / originalH * 100}%;"
+               on:click={() => regenerateTile(index)}
              >
                 {#if tile.status === 'processing'}
                   <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
