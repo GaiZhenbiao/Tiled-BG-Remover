@@ -1,0 +1,179 @@
+<script lang="ts">
+  import { onMount, createEventDispatcher } from 'svelte';
+  import { invoke } from '@tauri-apps/api/tauri';
+  import { convertFileSrc } from '@tauri-apps/api/tauri';
+
+  export let src: string;
+  export let rows: number;
+  export let cols: number;
+  export let overlap: number;
+  export let isProcessing: boolean;
+
+  let container: HTMLDivElement;
+  let imgElement: HTMLImageElement;
+  let displaySrc = '';
+  
+  // Grid visualization state
+  let gridStyle = '';
+  let tiles: any[] = [];
+  
+  // Result state
+  let resultSrc: string | null = null;
+  let tempDir = '';
+  let originalW = 0;
+  let originalH = 0;
+  
+  $: if (src) {
+    displaySrc = convertFileSrc(src);
+    resultSrc = null; // Reset result when source changes
+  }
+  
+  $: if (rows && cols && overlap && imgElement) {
+    calculateGrid();
+  }
+
+  // Effect: When isProcessing becomes true, start processing
+  $: if (isProcessing) {
+    processAll();
+  }
+
+  async function calculateGrid() {
+    // Only visualization logic here based on image aspect ratio?
+    // We need image dimensions.
+    if (!imgElement || !imgElement.complete) return;
+    
+    const w = imgElement.naturalWidth;
+    const h = imgElement.naturalHeight;
+    originalW = w;
+    originalH = h;
+    
+    // Calculate tile dimensions
+    const tileW = w / (cols - (cols - 1) * overlap);
+    const tileH = h / (rows - (rows - 1) * overlap);
+    
+    const overlapW = tileW * overlap;
+    const overlapH = tileH * overlap;
+    
+    tiles = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = c * (tileW - overlapW);
+        const y = r * (tileH - overlapH);
+        tiles.push({
+          r, c, x, y, w: tileW, h: tileH,
+          status: 'pending' // pending, processing, done, error
+        });
+      }
+    }
+  }
+
+  async function processAll() {
+    try {
+      // 1. Split
+      const splitRes: any = await invoke('split_img', {
+        path: src,
+        rows,
+        cols,
+        overlap_ratio: overlap
+      });
+      
+      tempDir = splitRes.temp_dir;
+      const tileFiles = splitRes.tiles;
+      
+      // Update tiles status
+      tiles = tiles.map(t => ({ ...t, status: 'processing' }));
+      
+      // Simulate API call delay
+      await new Promise(r => setTimeout(r, 2000));
+      
+      // 3. Merge
+      const updatePayload = tileFiles.map((t: any) => ({
+        r: t.r,
+        c: t.c,
+        path: t.path
+      }));
+      
+      const mergedB64: string = await invoke('merge_img', {
+        tiles: updatePayload,
+        original_w: splitRes.original_width,
+        original_h: splitRes.original_height,
+        overlap_ratio: overlap
+      });
+      
+      resultSrc = mergedB64;
+      tiles = tiles.map(t => ({ ...t, status: 'done' }));
+      
+    } catch (e) {
+      console.error(e);
+      alert('Error processing: ' + e);
+    } finally {
+      isProcessing = false;
+    }
+  }
+  
+  // Crop functionality helper (called from parent?)
+  export async function cropCenter() {
+     if (!imgElement) return;
+     const size = Math.min(imgElement.naturalWidth, imgElement.naturalHeight);
+     const x = (imgElement.naturalWidth - size) / 2;
+     const y = (imgElement.naturalHeight - size) / 2;
+     
+     // Call backend to crop and save as new temp file
+     const newPath: string = await invoke('crop_img', {
+       path: src, x: Math.round(x), y: Math.round(y), width: Math.round(size), height: Math.round(size)
+     });
+     
+     // Update src in parent? 
+     // We need to dispatch event to parent to update `imagePath`.
+     // Dispatching 'crop' event.
+     dispatch('crop', newPath);
+  }
+  
+  const dispatch = createEventDispatcher();
+
+<div class="relative w-full h-full flex items-center justify-center overflow-auto" bind:this={container}>
+  {#if displaySrc}
+    <div class="relative inline-block shadow-2xl">
+      <!-- Main Image -->
+      <img 
+        src={resultSrc || displaySrc} 
+        bind:this={imgElement}
+        on:load={handleImageLoad}
+        class="max-w-none block"
+        style="max-height: 80vh; object-fit: contain;"
+        alt="Source"
+      />
+      
+      <!-- Overlay Grid -->
+      {#if tiles.length > 0}
+        <svg class="absolute inset-0 pointer-events-none" viewBox={`0 0 ${originalW} ${originalH}`} preserveAspectRatio="none">
+           {#each tiles as tile}
+             <rect 
+               x={tile.x} y={tile.y} width={tile.w} height={tile.h} 
+               fill="none" stroke="rgba(255, 255, 255, 0.5)" stroke-width="2"
+             />
+             <!-- Overlap area visualization? -->
+           {/each}
+        </svg>
+      {/if}
+      
+      <!-- Interactive Layer -->
+      {#if tiles.length > 0}
+         <div class="absolute inset-0">
+           {#each tiles as tile}
+             <!-- svelte-ignore a11y-click-events-have-key-events -->
+             <div 
+               class="absolute hover:bg-blue-500 hover:bg-opacity-20 cursor-pointer group transition-colors border border-transparent hover:border-blue-400"
+               style="left: {tile.x / originalW * 100}%; top: {tile.y / originalH * 100}%; width: {tile.w / originalW * 100}%; height: {tile.h / originalH * 100}%;"
+               on:click={() => regenerateTile(tile)}
+             >
+                <div class="hidden group-hover:flex absolute top-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded shadow">
+                  Regenerate
+                </div>
+             </div>
+           {/each}
+         </div>
+      {/if}
+    </div>
+  {/if}
+</div>
