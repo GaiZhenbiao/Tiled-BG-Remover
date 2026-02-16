@@ -287,9 +287,6 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"></path><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"></path></svg>
                 {$t('cropImage')}
               </button>
-              <div class="flex flex-wrap gap-1 mt-1">
-                <button on:click={() => performCrop(Math.round((imgWidth - Math.min(imgWidth, imgHeight)) / 2), Math.round((imgHeight - Math.min(imgWidth, imgHeight)) / 2), Math.min(imgWidth, imgHeight), Math.min(imgWidth, imgHeight))} class="text-[10px] bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 px-2 py-0.5 rounded text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors" disabled={!imagePath}>{$t('centerCrop')}</button>
-              </div>
             </div>
 
             <div class="flex flex-col gap-2">
