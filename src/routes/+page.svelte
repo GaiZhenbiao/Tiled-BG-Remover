@@ -70,55 +70,57 @@
   <!-- Content -->
   <div class="flex-1 flex overflow-hidden">
     <!-- Sidebar Controls -->
-    <aside class="w-64 bg-gray-800 border-r border-gray-700 p-4 flex flex-col gap-6 overflow-y-auto">
+    <aside class="w-64 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden">
       {#if imagePath}
-        <div class="flex flex-col gap-2">
-          <label for="tools-label" class="text-xs font-semibold text-gray-400 uppercase">{$t('tools')}</label>
-          <button id="tools-label" on:click={cropToSquare} class="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1 rounded">
-            {$t('cropSquare')}
+        <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-6">
+          <div class="flex flex-col gap-2">
+            <label for="tools-label" class="text-xs font-semibold text-gray-400 uppercase">{$t('tools')}</label>
+            <button id="tools-label" on:click={cropToSquare} class="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1 rounded">
+              {$t('cropSquare')}
+            </button>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label for="grid-rows" class="text-xs font-semibold text-gray-400 uppercase">{$t('gridLayout')}</label>
+            <div class="flex gap-2 items-center">
+              <span class="w-8 text-sm">{$t('rows')}</span>
+              <input id="grid-rows" type="range" min="1" max="8" bind:value={rows} class="flex-1 accent-blue-500">
+              <span class="w-4 text-sm text-right">{rows}</span>
+            </div>
+            <div class="flex gap-2 items-center">
+              <span class="w-8 text-sm">{$t('cols')}</span>
+              <input id="grid-cols" type="range" min="1" max="8" bind:value={cols} class="flex-1 accent-blue-500">
+              <span class="w-4 text-sm text-right">{cols}</span>
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label for="overlap-slider" class="text-xs font-semibold text-gray-400 uppercase">{$t('overlap')} ({Math.round(overlap*100)}%)</label>
+            <input id="overlap-slider" type="range" min="0" max="0.5" step="0.05" bind:value={overlap} class="accent-blue-500">
+          </div>
+          
+          <div class="flex flex-col gap-2">
+            <label for="tile-res-select" class="text-xs font-semibold text-gray-400 uppercase">{$t('tileRes')}</label>
+            <select id="tile-res-select" bind:value={tileRes} class="bg-gray-700 border border-gray-600 rounded p-1 text-sm">
+              <option value={512}>512 x 512</option>
+              <option value={1024}>1024 x 1024</option>
+              <option value={2048}>2048 x 2048</option>
+            </select>
+          </div>
+
+          <hr class="border-gray-700">
+
+          <button 
+            on:click={() => isProcessing = true}
+            class="bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isProcessing}
+          >
+            {isProcessing ? $t('processing') : $t('processAll')}
           </button>
         </div>
-
-        <div class="flex flex-col gap-2">
-          <label for="grid-rows" class="text-xs font-semibold text-gray-400 uppercase">{$t('gridLayout')}</label>
-          <div class="flex gap-2 items-center">
-            <span class="w-8 text-sm">{$t('rows')}</span>
-            <input id="grid-rows" type="range" min="1" max="8" bind:value={rows} class="flex-1 accent-blue-500">
-            <span class="w-4 text-sm text-right">{rows}</span>
-          </div>
-          <div class="flex gap-2 items-center">
-            <span class="w-8 text-sm">{$t('cols')}</span>
-            <input id="grid-cols" type="range" min="1" max="8" bind:value={cols} class="flex-1 accent-blue-500">
-            <span class="w-4 text-sm text-right">{cols}</span>
-          </div>
-        </div>
-
-        <div class="flex flex-col gap-2">
-          <label for="overlap-slider" class="text-xs font-semibold text-gray-400 uppercase">{$t('overlap')} ({Math.round(overlap*100)}%)</label>
-          <input id="overlap-slider" type="range" min="0" max="0.5" step="0.05" bind:value={overlap} class="accent-blue-500">
-        </div>
         
-        <div class="flex flex-col gap-2">
-          <label for="tile-res-select" class="text-xs font-semibold text-gray-400 uppercase">{$t('tileRes')}</label>
-          <select id="tile-res-select" bind:value={tileRes} class="bg-gray-700 border border-gray-600 rounded p-1 text-sm">
-            <option value={512}>512 x 512</option>
-            <option value={1024}>1024 x 1024</option>
-            <option value={2048}>2048 x 2048</option>
-          </select>
-        </div>
-
-        <hr class="border-gray-700">
-
-        <button 
-          on:click={() => isProcessing = true}
-          class="bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={isProcessing}
-        >
-          {isProcessing ? $t('processing') : $t('processAll')}
-        </button>
-        
-        <div class="mt-auto border-t border-gray-700 pt-4 flex flex-col gap-2 max-h-48 overflow-y-auto text-xs">
-          <label class="font-semibold text-gray-400 uppercase">Log</label>
+        <div class="h-48 border-t border-gray-700 bg-gray-900/50 p-4 flex flex-col gap-2 overflow-y-auto text-xs">
+          <label class="font-semibold text-gray-400 uppercase sticky top-0 bg-inherit py-1">Log</label>
           {#each logs as log}
             <div class={log.type === 'error' ? 'text-red-400' : 'text-green-400'}>
               <span class="text-gray-500">[{log.time}]</span> {log.message}
