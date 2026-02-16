@@ -25,7 +25,7 @@ fn is_white(p: &Rgba<u8>) -> bool {
 }
 
 pub fn crop_image(input_path: &str, x: u32, y: u32, width: u32, height: u32, output_dir: &Path) -> Result<String, String> {
-    let mut img = image::open(input_path).map_err(|e| e.to_string())?;
+    let img = image::open(input_path).map_err(|e| e.to_string())?;
     let cropped = img.crop_imm(x, y, width, height);
     
     let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
@@ -66,7 +66,7 @@ pub fn split_image(
             // Ensure we don't go out of bounds, though crop handles it usually
             // But we want consistent tile size if possible, or handle edge cases.
             // image::crop returns a view, converting to image copies it.
-            let mut tile = img.crop_imm(x, y, tile_w, tile_h);
+            let tile = img.crop_imm(x, y, tile_w, tile_h);
 
             // Save tile
             let file_name = format!("tile_{}_{}.png", r, c);
@@ -91,8 +91,8 @@ pub fn split_image(
 
 pub fn merge_tiles(
     tile_paths: Vec<(u32, u32, String)>, // (row, col, path)
-    original_w: u32,
-    original_h: u32,
+    _original_w: u32,
+    _original_h: u32,
     overlap_ratio: f64,
 ) -> Result<String, String> {
     // Determine grid size

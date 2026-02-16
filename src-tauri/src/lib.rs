@@ -1,5 +1,4 @@
 use std::sync::Mutex;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 mod image_processing;
@@ -93,6 +92,7 @@ fn crop_img(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState { temp_dir: Mutex::new(None) })
         .invoke_handler(tauri::generate_handler![split_img, merge_img, crop_img])
         .run(tauri::generate_context!())
