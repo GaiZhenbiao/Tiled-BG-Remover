@@ -5,6 +5,7 @@
   const dispatch = createEventDispatcher();
   
   export let concurrency = 2;
+  export let theme = 'dark';
   
   let apiKey = localStorage.getItem('gemini_api_key') || '';
   let modelName = localStorage.getItem('gemini_model') || 'gemini-1.5-pro';
@@ -34,6 +35,14 @@
           <option value="en">English</option>
           <option value="zh">中文</option>
           <option value="ja">日本語</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="theme" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">Appearance</label>
+        <select id="theme" bind:value={theme} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors">
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
         </select>
       </div>
       

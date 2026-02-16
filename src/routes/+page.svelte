@@ -43,18 +43,17 @@
     applyTheme();
   });
 
-  function toggleTheme() {
-    theme = theme === 'dark' ? 'light' : 'dark';
-    localStorage.setItem('theme', theme);
-    applyTheme();
-  }
-
   function applyTheme() {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
+  }
+
+  $: if (theme) {
+    localStorage.setItem('theme', theme);
+    applyTheme();
   }
   
   // Processing state
@@ -226,19 +225,6 @@
       <span class="text-blue-600 dark:text-blue-400">{$t('appTitle')}</span>
     </div>
     <div class="flex items-center gap-2">
-      <!-- Theme Toggle -->
-      <button 
-        on:click={toggleTheme} 
-        class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-        title="Toggle Theme"
-      >
-        {#if theme === 'dark'}
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-        {:else}
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-        {/if}
-      </button>
-
       <!-- BG Removal Toggle -->
       <div class="flex items-center bg-gray-200 dark:bg-gray-700 rounded-full px-2 py-1 mr-2 border border-gray-300 dark:border-gray-600 transition-colors">
         <label class="flex items-center gap-2 cursor-pointer">
@@ -468,7 +454,7 @@
   </div>
 
   {#if showSettings}
-    <Settings bind:concurrency on:close={() => showSettings = false} />
+    <Settings bind:concurrency bind:theme on:close={() => showSettings = false} />
   {/if}
 
   {#if showCropModal}
