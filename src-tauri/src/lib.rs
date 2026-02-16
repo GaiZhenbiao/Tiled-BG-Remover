@@ -42,6 +42,13 @@ fn save_image(path: String, base64_data: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn save_image_resized(path: String, base64_data: String, width: u32, height: u32) -> Result<(), String> {
+    let data_str = base64_data.split(",").last().unwrap_or(&base64_data);
+    let data = general_purpose::STANDARD.decode(data_str).map_err(|e| e.to_string())?;
+    image_processing::save_resized_tile(&path, &data, width, height)
+}
+
+#[tauri::command]
 fn split_img(
     state: tauri::State<AppState>,
     path: String,
@@ -119,7 +126,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AppState { temp_dir: Mutex::new(None) })
-        .invoke_handler(tauri::generate_handler![split_img, merge_img, crop_img, load_image, save_image])
+        .invoke_handler(tauri::generate_handler![split_img, merge_img, crop_img, load_image, save_image, save_image_resized])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

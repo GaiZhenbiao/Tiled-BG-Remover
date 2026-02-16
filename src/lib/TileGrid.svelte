@@ -123,7 +123,7 @@
              reader.onloadend = () => resolve(reader.result as string);
         });
         
-        await invoke('save_image', { path: tile.path, base64Data: resultB64 });
+        await invoke('save_image_resized', { path: tile.path, base64Data: resultB64, width: Math.round(tile.w), height: Math.round(tile.h) });
         console.log(`Saved updated tile to ${tile.path}`);
         
         tiles[index].status = 'done';

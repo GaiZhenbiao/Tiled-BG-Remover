@@ -1,4 +1,4 @@
-use image::{GenericImageView, ImageFormat, Rgba, RgbaImage};
+use image::{GenericImageView, ImageFormat, Rgba, RgbaImage, imageops::FilterType};
 use std::path::Path;
 use base64::{Engine as _, engine::general_purpose};
 use std::io::Cursor;
@@ -25,7 +25,7 @@ fn is_white(p: &Rgba<u8>) -> bool {
 }
 
 pub fn crop_image(input_path: &str, x: u32, y: u32, width: u32, height: u32, output_dir: &Path) -> Result<String, String> {
-    let img = image::open(input_path).map_err(|e| e.to_string())?;
+    let mut img = image::open(input_path).map_err(|e| e.to_string())?;
     let cropped = img.crop_imm(x, y, width, height);
     
     let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
@@ -36,6 +36,13 @@ pub fn crop_image(input_path: &str, x: u32, y: u32, width: u32, height: u32, out
     cropped.to_rgba8().save_with_format(&file_path, ImageFormat::Png).map_err(|e| e.to_string())?;
     
     Ok(file_path.to_string_lossy().to_string())
+}
+
+pub fn save_resized_tile(path: &str, data: &[u8], width: u32, height: u32) -> Result<(), String> {
+    let img = image::load_from_memory(data).map_err(|e| e.to_string())?;
+    let resized = img.resize_exact(width, height, FilterType::Lanczos3);
+    resized.save_with_format(path, ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub fn split_image(
