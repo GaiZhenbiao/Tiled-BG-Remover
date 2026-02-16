@@ -65,7 +65,9 @@ export async function generateImage(imageBlob: Blob | null, prompt: string, mode
   }
   
   console.warn("No image found in response", JSON.stringify(data, null, 2));
-  throw new Error("Model did not return an image. Check if the model supports image output.");
+  // Include a snippet of the JSON in the error message for debugging
+  const snippet = JSON.stringify(data).substring(0, 200);
+  throw new Error(`Model did not return an image. Response: ${snippet}...`);
 }
 
 function b64toBlob(b64Data: string, contentType = '', sliceSize = 512) {

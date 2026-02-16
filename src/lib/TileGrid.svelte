@@ -127,9 +127,11 @@
         console.log(`Saved updated tile to ${tile.path}`);
         
         tiles[index].status = 'done';
-    } catch (e) {
+        dispatch('log', { type: 'success', message: `Tile ${tile.r},${tile.c} processed successfully.` });
+    } catch (e: any) {
         console.error(`Error processing tile ${tile.r},${tile.c}`, e);
         tiles[index].status = 'error';
+        dispatch('log', { type: 'error', message: `Tile ${tile.r},${tile.c}: ${e.message || e}` });
     } finally {
         tiles = [...tiles];
     }

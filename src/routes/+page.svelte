@@ -17,9 +17,14 @@
   
   // Processing state
   let isProcessing = false;
+  let logs: { type: string, message: string, time: string }[] = [];
   
   function handleImageSelected(path: string) {
     imagePath = path;
+  }
+  
+  function handleLog(e: CustomEvent) {
+    logs = [{ ...e.detail, time: new Date().toLocaleTimeString() }, ...logs].slice(0, 20);
   }
   
   async function cropToSquare() {
@@ -111,6 +116,15 @@
         >
           {isProcessing ? $t('processing') : $t('processAll')}
         </button>
+        
+        <div class="mt-auto border-t border-gray-700 pt-4 flex flex-col gap-2 max-h-48 overflow-y-auto text-xs">
+          <label class="font-semibold text-gray-400 uppercase">Log</label>
+          {#each logs as log}
+            <div class={log.type === 'error' ? 'text-red-400' : 'text-green-400'}>
+              <span class="text-gray-500">[{log.time}]</span> {log.message}
+            </div>
+          {/each}
+        </div>
       {/if}
     </aside>
 
@@ -124,7 +138,8 @@
           {rows} 
           {cols} 
           {overlap} 
-          bind:isProcessing 
+          bind:isProcessing
+          on:log={handleLog} 
         />
       {/if}
     </section>
