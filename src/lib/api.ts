@@ -19,7 +19,8 @@ export async function generateImage(imageBlob: Blob, prompt: string, model: stri
     }],
     generationConfig: {
       temperature: 0.4,
-      maxOutputTokens: 2048, 
+      maxOutputTokens: 2048,
+      responseMimeType: "image/jpeg" 
     }
   };
 
@@ -54,7 +55,7 @@ export async function generateImage(imageBlob: Blob, prompt: string, model: stri
     }
   }
   
-  console.warn("No image found in response", data);
+  console.warn("No image found in response", JSON.stringify(data, null, 2));
   throw new Error("Model did not return an image. Check if the model supports image output.");
 }
 
