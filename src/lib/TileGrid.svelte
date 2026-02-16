@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, createEventDispatcher } from 'svelte';
-  import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+  import { invoke } from '@tauri-apps/api/core';
   import { generateImage } from './api';
   import { generateMockTile } from './mock_api';
   import { t } from '../lib/i18n';
@@ -342,12 +342,20 @@
 
 <style>
   .checkerboard {
+    background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), 
+                      linear-gradient(-45deg, #ccc 25%, transparent 25%), 
+                      linear-gradient(45deg, transparent 75%, #ccc 75%), 
+                      linear-gradient(-45deg, transparent 75%, #ccc 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+    background-color: #eee;
+  }
+  
+  :global(.dark) .checkerboard {
     background-image: linear-gradient(45deg, #333 25%, transparent 25%), 
                       linear-gradient(-45deg, #333 25%, transparent 25%), 
                       linear-gradient(45deg, transparent 75%, #333 75%), 
                       linear-gradient(-45deg, transparent 75%, #333 75%);
-    background-size: 20px 20px;
-    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
     background-color: #222;
   }
 </style>

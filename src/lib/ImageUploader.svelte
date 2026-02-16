@@ -47,7 +47,7 @@
 <div 
   role="button"
   tabindex="0"
-  class="border-2 border-dashed border-gray-600 rounded-xl p-12 flex flex-col items-center justify-center text-gray-400 hover:border-blue-500 hover:text-blue-500 transition cursor-pointer"
+  class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-12 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400 hover:border-blue-600 dark:hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-500 transition-all cursor-pointer bg-white dark:bg-gray-800 shadow-sm hover:shadow-md"
   on:click={selectFile}
   on:dragover|preventDefault
   on:drop={handleDrop}

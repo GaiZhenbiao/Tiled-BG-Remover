@@ -193,14 +193,14 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="fixed inset-0 bg-black/90 z-[100] flex flex-col items-center justify-center p-8" on:mousemove={onMouseMove} on:mouseup={onMouseUp}>
+<div class="fixed inset-0 bg-black/90 dark:bg-black/95 z-[100] flex flex-col items-center justify-center p-8 transition-colors" on:mousemove={onMouseMove} on:mouseup={onMouseUp}>
   <div class="flex-1 relative w-full flex items-center justify-center overflow-hidden">
     <div class="relative inline-block" bind:this={container}>
       <img 
         src={loadedSrc} 
         bind:this={imgElement} 
         on:load={handleImageLoad}
-        class="max-h-[70vh] max-w-full select-none"
+        class="max-h-[70vh] max-w-full select-none shadow-2xl"
         alt="To crop"
         draggable="false"
       />
@@ -217,25 +217,25 @@
           on:mousedown={(e) => onMouseDown(e, 'move')}
         >
           <!-- Size Display -->
-          <div class="absolute -top-6 left-1/2 transform -translate-x-1/2 bg-black/70 text-white text-xs px-2 py-0.5 rounded pointer-events-none whitespace-nowrap">
+          <div class="absolute -top-6 left-1/2 transform -translate-x-1/2 bg-black/70 text-white text-[10px] px-2 py-0.5 rounded pointer-events-none whitespace-nowrap font-mono">
             {Math.round(cropW)} x {Math.round(cropH)}
           </div>
 
           <!-- Handles -->
           <div 
-            class="absolute -left-1.5 -top-1.5 w-3 h-3 bg-white border border-gray-800 cursor-nw-resize rounded-full"
+            class="absolute -left-1.5 -top-1.5 w-3 h-3 bg-white border border-blue-600 cursor-nw-resize rounded-full shadow-sm"
             on:mousedown|stopPropagation={(e) => onMouseDown(e, 'nw')}
           ></div>
           <div 
-            class="absolute -right-1.5 -top-1.5 w-3 h-3 bg-white border border-gray-800 cursor-ne-resize rounded-full"
+            class="absolute -right-1.5 -top-1.5 w-3 h-3 bg-white border border-blue-600 cursor-ne-resize rounded-full shadow-sm"
             on:mousedown|stopPropagation={(e) => onMouseDown(e, 'ne')}
           ></div>
           <div 
-            class="absolute -left-1.5 -bottom-1.5 w-3 h-3 bg-white border border-gray-800 cursor-sw-resize rounded-full"
+            class="absolute -left-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-sw-resize rounded-full shadow-sm"
             on:mousedown|stopPropagation={(e) => onMouseDown(e, 'sw')}
           ></div>
           <div 
-            class="absolute -right-1.5 -bottom-1.5 w-3 h-3 bg-white border border-gray-800 cursor-se-resize rounded-full"
+            class="absolute -right-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-se-resize rounded-full shadow-sm"
             on:mousedown|stopPropagation={(e) => onMouseDown(e, 'se')}
           ></div>
         </div>
@@ -245,11 +245,11 @@
 
   
   <div class="mt-8 flex flex-col items-center gap-4 w-full max-w-2xl">
-    <div class="flex gap-2">
+    <div class="flex flex-wrap justify-center gap-2">
       {#each aspectRatios as ar}
         <button 
           on:click={() => aspectRatio = ar.value}
-          class="px-4 py-2 rounded {aspectRatio === ar.value ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}"
+          class="px-4 py-1.5 rounded-full text-sm font-medium transition-all {aspectRatio === ar.value ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700'}"
         >
           {ar.label}
         </button>
@@ -257,8 +257,8 @@
     </div>
     
     <div class="flex gap-4">
-      <button on:click={() => dispatch('cancel')} class="px-8 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold">Cancel</button>
-      <button on:click={done} class="px-8 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-bold">Done</button>
+      <button on:click={() => dispatch('cancel')} class="px-8 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg font-bold border border-gray-700 transition-colors">Cancel</button>
+      <button on:click={done} class="px-8 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold shadow-lg transition-all active:scale-95">Done</button>
     </div>
   </div>
 </div>

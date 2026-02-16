@@ -27,12 +27,4 @@ html, body {
 
 body {
   display: flex;
-  background-color: #111827; /* Matches gray-900 */
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
 }
