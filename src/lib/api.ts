@@ -12,9 +12,10 @@ export async function generateImage(imageBlob: Blob, prompt: string, model: stri
   
   const payload = {
     contents: [{
+      role: "user",
       parts: [
-        { text: prompt },
-        { inline_data: { mime_type: mimeType, data: base64Image } }
+        { inline_data: { mime_type: mimeType, data: base64Image } },
+        { text: prompt }
       ]
     }],
     generationConfig: {
@@ -23,6 +24,8 @@ export async function generateImage(imageBlob: Blob, prompt: string, model: stri
       responseMimeType: "image/jpeg" 
     }
   };
+
+  console.log(`Sending request to ${model} with prompt: "${prompt}"`);
 
   const response = await fetch(url, {
     method: 'POST',
