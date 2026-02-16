@@ -46,7 +46,6 @@
     <div class="mb-4">
       <label for="model-name" class="block text-sm font-medium mb-1">{$t('settings.modelName')}</label>
       <select id="model-name" bind:value={modelName} class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white">
-        <option value="gemini-2.0-flash-exp">gemini-2.0-flash-exp</option>
         <option value="gemini-2.5-flash-image">gemini-2.5-flash-image</option>
         <option value="gemini-3-pro-image-preview">gemini-3-pro-image-preview</option>
       </select>
