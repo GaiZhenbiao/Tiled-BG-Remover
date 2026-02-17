@@ -7,38 +7,62 @@
   export let concurrency = 2;
   export let theme = 'dark';
 
-  const DEFAULT_PROMPT_TEMPLATE = `Task: Generate one tile from a larger image.
+  const DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE = `Task: Generate one tile from a larger image.
 Main subject: {subject}
 Preserve the main subject exactly as-is. Do not change subject shape, geometry, pose, colors, materials, logos, or text.
 Background rule: {background_instruction}
 Background must be a single flat color only, with clean edges and absolutely no shadows, gradients, reflections, glow, or texture.
 Tile position: row {tile_row}/{tile_rows}, column {tile_col}/{tile_cols}.
-Use the full-image reference for global consistency. Keep scale, edges, and details consistent across tiles.
+Use the full-image reference to keep composition, subject scale, and global consistency across neighboring tiles.
+Return only the generated tile image.`;
+
+  const DEFAULT_PROMPT_TEMPLATE_WITHOUT_REFERENCE = `Task: Generate one tile from a larger image.
+Main subject: {subject}
+Preserve the main subject exactly as-is. Do not change subject shape, geometry, pose, colors, materials, logos, or text.
+Background rule: {background_instruction}
+Background must be a single flat color only, with clean edges and absolutely no shadows, gradients, reflections, glow, or texture.
 Return only the generated tile image.`;
   
   let apiKey = localStorage.getItem('gemini_api_key') || '';
   let apiUrl = localStorage.getItem('gemini_api_url') || 'https://generativelanguage.googleapis.com';
   let modelName = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
-  let promptTemplate =
+  const legacyPromptTemplate =
     localStorage.getItem('gemini_prompt_template') ||
     localStorage.getItem('gemini_prompt') ||
-    DEFAULT_PROMPT_TEMPLATE;
+    '';
+  let promptTemplateWithReference =
+    localStorage.getItem('gemini_prompt_template_with_reference') ||
+    legacyPromptTemplate ||
+    DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE;
+  let promptTemplateWithoutReference =
+    localStorage.getItem('gemini_prompt_template_without_reference') ||
+    legacyPromptTemplate ||
+    DEFAULT_PROMPT_TEMPLATE_WITHOUT_REFERENCE;
   let operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
   let verboseLogging = localStorage.getItem('verbose_logging') === 'true';
+  let useFullImageReference = localStorage.getItem('use_full_image_reference') === 'true';
 
-  function restorePromptTemplate() {
-    promptTemplate = DEFAULT_PROMPT_TEMPLATE;
+  function restorePromptTemplateWithReference() {
+    promptTemplateWithReference = DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE;
+  }
+
+  function restorePromptTemplateWithoutReference() {
+    promptTemplateWithoutReference = DEFAULT_PROMPT_TEMPLATE_WITHOUT_REFERENCE;
   }
   
   function save() {
     localStorage.setItem('gemini_api_key', apiKey);
     localStorage.setItem('gemini_api_url', apiUrl.trim());
     localStorage.setItem('gemini_model', modelName);
-    localStorage.setItem('gemini_prompt_template', promptTemplate);
+    localStorage.setItem('gemini_prompt_template_with_reference', promptTemplateWithReference);
+    localStorage.setItem('gemini_prompt_template_without_reference', promptTemplateWithoutReference);
+    const activeTemplate = useFullImageReference ? promptTemplateWithReference : promptTemplateWithoutReference;
+    localStorage.setItem('gemini_prompt_template', activeTemplate);
     // Backward compatibility for any older reads.
-    localStorage.setItem('gemini_prompt', promptTemplate);
+    localStorage.setItem('gemini_prompt', activeTemplate);
     localStorage.setItem('gemini_operation_mode', operationMode);
     localStorage.setItem('verbose_logging', verboseLogging.toString());
+    localStorage.setItem('use_full_image_reference', useFullImageReference.toString());
     localStorage.setItem('concurrency', concurrency.toString());
     dispatch('close');
   }
@@ -81,6 +105,11 @@ Return only the generated tile image.`;
         <span class="text-sm text-gray-700 dark:text-gray-300">{$t('settings.verboseLogging')}</span>
         <input type="checkbox" bind:checked={verboseLogging} class="accent-blue-600">
       </label>
+
+      <label class="flex items-center justify-between gap-3 rounded border border-gray-200 dark:border-gray-700 p-2">
+        <span class="text-sm text-gray-700 dark:text-gray-300">{$t('settings.fullImageReference')}</span>
+        <input type="checkbox" bind:checked={useFullImageReference} class="accent-blue-600">
+      </label>
       
       <div>
         <label for="api-key" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.apiKey')}</label>
@@ -110,16 +139,30 @@ Return only the generated tile image.`;
 
       <div>
         <div class="mb-1 flex items-center justify-between gap-2">
-          <label for="system-prompt" class="block text-sm font-medium text-gray-700 dark:text-gray-300">{$t('settings.promptTemplate')}</label>
+          <label for="system-prompt-with-ref" class="block text-sm font-medium text-gray-700 dark:text-gray-300">{$t('settings.promptTemplateWithReference')}</label>
           <button
             type="button"
-            on:click={restorePromptTemplate}
+            on:click={restorePromptTemplateWithReference}
             class="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
           >
             {$t('settings.restoreDefault')}
           </button>
         </div>
-        <textarea id="system-prompt" bind:value={promptTemplate} rows="7" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors"></textarea>
+        <textarea id="system-prompt-with-ref" bind:value={promptTemplateWithReference} rows="7" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors"></textarea>
+      </div>
+
+      <div>
+        <div class="mb-1 flex items-center justify-between gap-2">
+          <label for="system-prompt-no-ref" class="block text-sm font-medium text-gray-700 dark:text-gray-300">{$t('settings.promptTemplateWithoutReference')}</label>
+          <button
+            type="button"
+            on:click={restorePromptTemplateWithoutReference}
+            class="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          >
+            {$t('settings.restoreDefault')}
+          </button>
+        </div>
+        <textarea id="system-prompt-no-ref" bind:value={promptTemplateWithoutReference} rows="7" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors"></textarea>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
           Placeholders: <code>{'{subject}'}</code>, <code>{'{background_instruction}'}</code>,
           <code>{'{key_color}'}</code>, <code>{'{tile_row}'}</code>, <code>{'{tile_col}'}</code>,

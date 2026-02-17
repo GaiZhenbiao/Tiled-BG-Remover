@@ -56,14 +56,21 @@
   const MIN_ZOOM = 0.01;
   const MAX_ZOOM = 8;
   const ZOOM_STEP = 1.15;
-  const DEFAULT_PROMPT_TEMPLATE =
+  const DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE =
     `Task: Generate one tile from a larger image.\n` +
     `Main subject: {subject}\n` +
     `Preserve the main subject exactly as-is. Do not change subject shape, geometry, pose, colors, materials, logos, or text.\n` +
     `Background rule: {background_instruction}\n` +
     `Background must be a single flat color only, with clean edges and absolutely no shadows, gradients, reflections, glow, or texture.\n` +
     `Tile position: row {tile_row}/{tile_rows}, column {tile_col}/{tile_cols}.\n` +
-    `Use the full-image reference for global consistency. Keep scale, edges, and details consistent across tiles.\n` +
+    `Use the full-image reference to keep composition, subject scale, and global consistency across neighboring tiles.\n` +
+    `Return only the generated tile image.`;
+  const DEFAULT_PROMPT_TEMPLATE_WITHOUT_REFERENCE =
+    `Task: Generate one tile from a larger image.\n` +
+    `Main subject: {subject}\n` +
+    `Preserve the main subject exactly as-is. Do not change subject shape, geometry, pose, colors, materials, logos, or text.\n` +
+    `Background rule: {background_instruction}\n` +
+    `Background must be a single flat color only, with clean edges and absolutely no shadows, gradients, reflections, glow, or texture.\n` +
     `Return only the generated tile image.`;
   
   // Grid visualization state
@@ -135,11 +142,22 @@
     }
   }
 
-  function getPromptTemplate(): string {
-    return (
+  function getPromptTemplate(useFullImageReference: boolean): string {
+    const legacyTemplate =
       localStorage.getItem('gemini_prompt_template') ||
       localStorage.getItem('gemini_prompt') ||
-      DEFAULT_PROMPT_TEMPLATE
+      '';
+    if (useFullImageReference) {
+      return (
+        localStorage.getItem('gemini_prompt_template_with_reference') ||
+        legacyTemplate ||
+        DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE
+      );
+    }
+    return (
+      localStorage.getItem('gemini_prompt_template_without_reference') ||
+      legacyTemplate ||
+      DEFAULT_PROMPT_TEMPLATE_WITHOUT_REFERENCE
     );
   }
 
@@ -149,6 +167,10 @@
 
   function isVerboseLoggingEnabled(): boolean {
     return localStorage.getItem('verbose_logging') === 'true';
+  }
+
+  function isFullImageReferenceEnabled(): boolean {
+    return localStorage.getItem('use_full_image_reference') === 'true';
   }
 
   function renderPromptTemplate(template: string, context: Record<string, string>): string {
@@ -177,11 +199,26 @@
     return 'Remove background to solid pure green (#00FF00). No shadows or gradients.';
   }
 
+  function getReferencePromptInstruction(useFullImageReference: boolean): string {
+    if (useFullImageReference) {
+      return 'Use the provided full-image reference to keep composition, subject scale, and global consistency across neighboring tiles.';
+    }
+    return '';
+  }
+
+  function getTilePositionInstruction(tile: any, useFullImageReference: boolean): string {
+    if (!useFullImageReference) return '';
+    return `Tile position: row ${tile.r + 1}/${rows}, column ${tile.c + 1}/${cols}.`;
+  }
+
   function buildPromptForTile(tile: any): string {
-    const template = getPromptTemplate();
+    const useFullImageReference = isFullImageReferenceEnabled();
+    const template = getPromptTemplate(useFullImageReference);
     const context: Record<string, string> = {
       subject: detectedSubject || 'main subject',
       background_instruction: getKeyColorBackgroundInstruction(keyColor),
+      tile_position_instruction: getTilePositionInstruction(tile, useFullImageReference),
+      reference_instruction: getReferencePromptInstruction(useFullImageReference),
       key_color: bgRemovalEnabled ? keyColor : 'white',
       tile_row: String(tile.r + 1),
       tile_col: String(tile.c + 1),
@@ -192,7 +229,19 @@
       image_width: String(Math.round(originalW)),
       image_height: String(Math.round(originalH))
     };
-    return renderPromptTemplate(template, context).trim();
+    let rendered = renderPromptTemplate(template, context)
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    if (!useFullImageReference) {
+      rendered = rendered
+        .replace(/^\s*Tile position:.*(?:\r?\n|$)/gim, '')
+        .replace(/^\s*Reference guidance:.*(?:\r?\n|$)/gim, '')
+        .replace(/^\s*Use the full-image reference.*(?:\r?\n|$)/gim, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      return rendered;
+    }
+    return rendered;
   }
 
   async function getFullImageBlob(): Promise<Blob | null> {
@@ -531,6 +580,7 @@
             if (!apiKey) throw new Error("API Key not found. Please set it in Settings.");
 
             let prompt = buildPromptForTile(tile);
+            const useFullImageReference = isFullImageReferenceEnabled();
             
             if (bgRemovalEnabled) {
               prompt += `\nKeying color selected: ${keyColor}.`;
@@ -549,7 +599,7 @@
                 const b64Data = await invoke('load_image', { path: tile.originalPath }) as string;
                 const res = await fetch(b64Data);
                 inputBlob = await res.blob();
-                fullImageBlob = await getFullImageBlob();
+                fullImageBlob = useFullImageReference ? await getFullImageBlob() : null;
             }
             
             // API Call
@@ -562,7 +612,7 @@
             }
             resultBlob = await generateImage(inputBlob, prompt, model, apiKey, {
               apiBaseUrl,
-              fullImageBlob
+              fullImageBlob: useFullImageReference ? fullImageBlob : null
             });
         }
         
