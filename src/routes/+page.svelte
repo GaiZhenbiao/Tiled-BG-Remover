@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import ImageUploader from '../lib/ImageUploader.svelte';
   import TileGrid from '../lib/TileGrid.svelte';
   import Settings from '../lib/Settings.svelte';
@@ -32,6 +32,9 @@
     1,
     20000
   );
+  let showTileLines = localStorage.getItem('show_tile_lines') === 'true';
+  let isAdjustingGrid = false;
+  let gridAdjustTimer: ReturnType<typeof setTimeout> | null = null;
   
   // BG Removal State
   let bgRemovalEnabled = false;
@@ -49,6 +52,12 @@
     applyTheme();
   });
 
+  onDestroy(() => {
+    if (gridAdjustTimer) {
+      clearTimeout(gridAdjustTimer);
+    }
+  });
+
   function applyTheme() {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -63,6 +72,7 @@
   }
 
   $: localStorage.setItem('smart_tile_tolerance_px', smartTileTolerancePx.toString());
+  $: localStorage.setItem('show_tile_lines', showTileLines.toString());
   
   // Processing state
   let isProcessing = false;
@@ -201,6 +211,17 @@
     const rawCount = (size / safeMaxTileSize - overlapRatio) / denom;
     return clampInt(Math.ceil(rawCount), 1, smartGridMaxCount);
   }
+
+  function markGridAdjusting() {
+    isAdjustingGrid = true;
+    if (gridAdjustTimer) {
+      clearTimeout(gridAdjustTimer);
+    }
+    gridAdjustTimer = setTimeout(() => {
+      isAdjustingGrid = false;
+      gridAdjustTimer = null;
+    }, 250);
+  }
 </script>
 
 <main class="h-screen w-screen flex flex-col bg-white dark:bg-gray-900 text-gray-900 dark:text-white overflow-hidden transition-colors duration-200">
@@ -307,18 +328,19 @@
                     max={smartTileLimitMax}
                     step="1"
                     bind:value={smartTileTolerancePx}
+                    on:input={markGridAdjusting}
                     class="w-full accent-blue-500"
                   >
                 </div>
               {:else}
                 <div class="flex gap-2 items-center">
                   <span class="w-8 text-sm text-gray-600 dark:text-gray-300">{$t('rows')}</span>
-                  <input id="grid-rows" type="range" min="1" max="16" bind:value={rows} class="flex-1 accent-blue-500">
+                  <input id="grid-rows" type="range" min="1" max="16" bind:value={rows} on:input={markGridAdjusting} class="flex-1 accent-blue-500">
                   <span class="w-4 text-sm text-right font-mono text-gray-700 dark:text-gray-200">{rows}</span>
                 </div>
                 <div class="flex gap-2 items-center">
                   <span class="w-8 text-sm text-gray-600 dark:text-gray-300">{$t('cols')}</span>
-                  <input id="grid-cols" type="range" min="1" max="16" bind:value={cols} class="flex-1 accent-blue-500">
+                  <input id="grid-cols" type="range" min="1" max="16" bind:value={cols} on:input={markGridAdjusting} class="flex-1 accent-blue-500">
                   <span class="w-4 text-sm text-right font-mono text-gray-700 dark:text-gray-200">{cols}</span>
                 </div>
               {/if}
@@ -326,9 +348,14 @@
               <div class="flex flex-col gap-1">
                 <div class="flex justify-between items-center">
                   <span class="text-xs text-gray-500 dark:text-gray-400">{$t('overlap')} ({Math.round(overlap*100)}%)</span>
-                  <input id="overlap-slider" type="range" min="0" max="0.5" step="0.05" bind:value={overlap} class="w-32 accent-blue-500">
+                  <input id="overlap-slider" type="range" min="0" max="0.5" step="0.05" bind:value={overlap} on:input={markGridAdjusting} class="w-32 accent-blue-500">
                 </div>
               </div>
+
+              <label class="flex items-center gap-2 cursor-pointer mt-1">
+                <input type="checkbox" bind:checked={showTileLines} class="accent-blue-500">
+                <span class="text-xs text-gray-600 dark:text-gray-300">{$t('showTileLines')}</span>
+              </label>
             </div>
             
             <div class="flex flex-col gap-2">
@@ -427,6 +454,8 @@
           {keyColor}
           {tolerance}
           {concurrency}
+          {showTileLines}
+          {isAdjustingGrid}
           {showOriginalInput}
           bind:isProcessing 
           bind:resultSrc
