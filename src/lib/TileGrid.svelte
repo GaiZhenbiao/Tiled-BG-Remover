@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, createEventDispatcher } from 'svelte';
+  import { createEventDispatcher } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { generateImage } from './api';
   import { generateMockTile } from './mock_api';
@@ -26,6 +26,7 @@
   let displaySrc = '';
   let isSplitting = false;
   let isMerging = false;
+  let hoveredTileIndex: number | null = null;
   
   // Grid visualization state
   let tiles: any[] = [];
@@ -60,7 +61,7 @@
     }
   }
   
-  $: if (rows && cols && overlap && imgElement) {
+  $: if (rows && cols && imgElement) {
     calculateGrid();
   }
 
@@ -134,6 +135,9 @@
                 const b64Data = await invoke('load_image', { path: tile.originalPath }) as string;
                 const res = await fetch(b64Data);
                 inputBlob = await res.blob();
+                if (resizeInputToOutput) {
+                  inputBlob = await resizeBlob(inputBlob, aiOutputRes, aiOutputRes);
+                }
             }
             
             // API Call
@@ -147,11 +151,10 @@
              reader.onloadend = () => resolve(reader.result as string);
         });
         
-        // Use resize if requested
         if (resizeInputToOutput) {
-            await invoke('save_image_resized', { path: tile.path, base64Data: resultB64, width: Math.round(tile.w), height: Math.round(tile.h) });
+          await invoke('save_image_resized', { path: tile.path, base64Data: resultB64, width: Math.round(tile.w), height: Math.round(tile.h) });
         } else {
-            await invoke('save_image', { path: tile.path, base64Data: resultB64 });
+          await invoke('save_image', { path: tile.path, base64Data: resultB64 });
         }
         
         tiles[index].status = 'done';
@@ -213,6 +216,10 @@
         let i = 0;
         for (const resTile of splitRes.tiles) {
             if (tiles[i]) {
+                tiles[i].x = resTile.x;
+                tiles[i].y = resTile.y;
+                tiles[i].w = resTile.width;
+                tiles[i].h = resTile.height;
                 tiles[i].path = resTile.path;
                 tiles[i].originalPath = resTile.original_path;
             }
@@ -275,6 +282,32 @@
     await processSingleTile(index);
     await mergeAll();
   }
+
+  async function resizeBlob(blob: Blob, width: number, height: number): Promise<Blob> {
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bitmap.close();
+      throw new Error('Failed to create canvas context for tile resize.');
+    }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+
+    const resized = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((b) => resolve(b), 'image/png');
+    });
+    if (!resized) {
+      throw new Error('Failed to resize tile image.');
+    }
+    return resized;
+  }
 </script>
 
 <div class="relative w-full h-full flex items-center justify-center overflow-auto" bind:this={container}>
@@ -317,22 +350,22 @@
            {/if}
            
            {#each tiles as tile, index}
-             <!-- svelte-ignore a11y-click-events-have-key-events -->
+             <!-- svelte-ignore a11y_no_static_element_interactions -->
              <div 
-               role="button"
-               tabindex="0"
-               class="absolute group transition-all duration-200 border border-transparent hover:border-blue-400 hover:bg-blue-500/30 flex items-center justify-center cursor-pointer overflow-hidden"
+               class="absolute group transition-all duration-200 border flex items-center justify-center cursor-default overflow-hidden {hoveredTileIndex === index ? 'border-blue-400 bg-blue-500/30' : 'border-transparent hover:border-blue-400 hover:bg-blue-500/30'}"
                style="left: {tile.x / originalW * 100}%; top: {tile.y / originalH * 100}%; width: {tile.w / originalW * 100}%; height: {tile.h / originalH * 100}%;"
-               on:click={() => regenerateTile(index)}
+               on:mouseenter={() => hoveredTileIndex = index}
+               on:mouseleave={() => hoveredTileIndex = hoveredTileIndex === index ? null : hoveredTileIndex}
              >
                 {#if tile.status === 'processing'}
                   <div class="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-[1px]">
                     <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
                   </div>
-                {:else}
+                {:else if hoveredTileIndex === index}
                   <button 
                     on:click|stopPropagation={() => regenerateTile(index)}
-                    class="opacity-0 group-hover:opacity-100 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transform translate-y-2 group-hover:translate-y-0 transition-all duration-300 ease-out z-40"
+                    class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transition-all duration-150 ease-out z-40 cursor-pointer disabled:cursor-not-allowed"
+                    disabled={isSplitting || isMerging || isProcessing}
                   >
                     {tile.status === 'pending' ? $t('generate') : $t('regenerate')}
                   </button>

@@ -26,6 +26,12 @@
   let concurrency = 2;
   let resizeInputToOutput = true;
   let smartGridEnabled = true;
+  const smartGridMaxCount = 64;
+  let smartTileTolerancePx = clampInt(
+    parseInt(localStorage.getItem('smart_tile_tolerance_px') || String(aiOutputRes * 2)),
+    1,
+    20000
+  );
   
   // BG Removal State
   let bgRemovalEnabled = false;
@@ -55,6 +61,8 @@
     localStorage.setItem('theme', theme);
     applyTheme();
   }
+
+  $: localStorage.setItem('smart_tile_tolerance_px', smartTileTolerancePx.toString());
   
   // Processing state
   let isProcessing = false;
@@ -102,64 +110,22 @@
     aiOutputRes = availableResolutions[0];
   }
 
+  $: smartTileLimitMax = Math.max(imgWidth, imgHeight) > 0 ? Math.max(imgWidth, imgHeight) : aiOutputRes * 2;
+  $: smartTileLimitMin = Math.min(aiOutputRes, smartTileLimitMax);
+  $: smartTileTolerancePx = clampInt(smartTileTolerancePx, smartTileLimitMin, smartTileLimitMax);
+  $: smartMaxTileSize = smartTileTolerancePx;
+
   // Smart Grid Logic
   $: if (smartGridEnabled && imgWidth && imgHeight && aiOutputRes) {
-    // Allow up to 2x scaling (tile size can be up to 2 * aiOutputRes)
-    // Effectively we calculate grid based on target resolution being up to 2x AI res
-    const maxTileSize = 2 * aiOutputRes;
-    
-    // We want the tiles to be as large as possible up to maxTileSize to minimize tile count
-    // But we also want them to be close to a multiple that fits well.
-    // Actually, the logic "allow up to twice" means we can aim for a grid where tile size <= 2*aiOutputRes.
-    // But wait, if the AI output is fixed (e.g. 1024), and we feed it a 2048 tile, it will downscale it?
-    // Or does the user mean the AI *input* tile can be larger?
-    // "Allow each grid to be up to twice the resolution as the AI output resolution"
-    // implies that if AI output is 1024, we can crop a 2048x2048 area from the source image.
-    // This input tile will then be resized (if 'Resize input' is checked) or just fed to AI (if model supports it).
-    // The prompt says "so fewer tiles would be created".
-    
-    // Standard coverage formula:
-    // W = T + (cols - 1) * T * (1 - O)
-    // cols = (W - T) / (T * (1 - O)) + 1
-    // We want to find min cols such that calculated Tile Size T <= 2 * aiOutputRes.
-    // Actually, T is determined by cols.
-    // T = W / (cols - (cols - 1) * overlap)
-    // We want T <= 2 * aiOutputRes
-    
     const O = overlap;
-    let optimalRows = 1;
-    let optimalCols = 1;
-    
-    // Iterate to find smallest cols that satisfies condition
-    for (let c = 1; c <= 16; c++) {
-        const T_w = imgWidth / (c - (c - 1) * O);
-        if (T_w <= 2 * aiOutputRes) {
-            optimalCols = c;
-            break;
-        }
-        optimalCols = c; // Fallback to max if never satisfies (though it should eventually)
-    }
-    
-    for (let r = 1; r <= 16; r++) {
-        const T_h = imgHeight / (r - (r - 1) * O);
-        if (T_h <= 2 * aiOutputRes) {
-            optimalRows = r;
-            break;
-        }
-        optimalRows = r;
-    }
-    
-    cols = optimalCols;
-    rows = optimalRows;
+    cols = computeSmartGridCount(imgWidth, smartMaxTileSize, O);
+    rows = computeSmartGridCount(imgHeight, smartMaxTileSize, O);
   }
   
   // Resolution Info
   $: tileW = imgWidth / (cols - (cols - 1) * overlap);
   $: tileH = imgHeight / (rows - (rows - 1) * overlap);
-
-  $: if (tileW && tileH) {
-    resizeInputToOutput = Math.abs(tileW - tileH) < 0.1;
-  }
+  $: totalTiles = rows * cols;
 
   function handleImageSelected(path: string) {
     imagePath = path;
@@ -220,6 +186,20 @@
   function setTolerance(e: any) {
     tolerance = parseInt(e.target.value);
     localStorage.setItem('key_tolerance', tolerance.toString());
+  }
+
+  function clampInt(value: number, min: number, max: number): number {
+    if (Number.isNaN(value)) return min;
+    return Math.min(max, Math.max(min, Math.round(value)));
+  }
+
+  function computeSmartGridCount(size: number, maxTileSize: number, overlapRatio: number): number {
+    const safeMaxTileSize = Math.max(1, maxTileSize);
+    const denom = 1 - overlapRatio;
+    if (denom <= 0) return smartGridMaxCount;
+
+    const rawCount = (size / safeMaxTileSize - overlapRatio) / denom;
+    return clampInt(Math.ceil(rawCount), 1, smartGridMaxCount);
   }
 </script>
 
@@ -304,7 +284,7 @@
               </div>
               
               {#if smartGridEnabled}
-                <div class="bg-gray-50 dark:bg-gray-900/50 p-2 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-1 transition-colors">
+                <div class="bg-gray-50 dark:bg-gray-900/50 p-2 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-2 transition-colors">
                   <div class="flex justify-between text-xs">
                     <span class="text-gray-500">{$t('rows')}</span>
                     <span class="font-mono text-gray-700 dark:text-gray-200">{rows}</span>
@@ -313,6 +293,22 @@
                     <span class="text-gray-500">{$t('cols')}</span>
                     <span class="font-mono text-gray-700 dark:text-gray-200">{cols}</span>
                   </div>
+                  <div class="flex justify-between items-center text-xs mt-1">
+                    <span class="text-gray-500 dark:text-gray-400">{$t('tileCount')}</span>
+                    <span class="font-mono text-gray-700 dark:text-gray-200">{totalTiles}</span>
+                  </div>
+                  <div class="flex justify-between text-[10px] text-gray-500 dark:text-gray-400">
+                    <span>{$t('higherQuality')}</span>
+                    <span>{$t('lowerQuality')}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={smartTileLimitMin}
+                    max={smartTileLimitMax}
+                    step="1"
+                    bind:value={smartTileTolerancePx}
+                    class="w-full accent-blue-500"
+                  >
                 </div>
               {:else}
                 <div class="flex gap-2 items-center">
@@ -430,6 +426,7 @@
           {bgRemovalEnabled}
           {keyColor}
           {tolerance}
+          {concurrency}
           {showOriginalInput}
           bind:isProcessing 
           bind:resultSrc
