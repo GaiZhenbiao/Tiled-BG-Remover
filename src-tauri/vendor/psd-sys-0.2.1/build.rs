@@ -48,8 +48,22 @@ fn main() {
     if target_os == "macos" {
         // Xcode 16 marks std::filesystem APIs unavailable below 10.15, and arm64 apps
         // are expected to target macOS 11+.
-        let deployment_target =
-            env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "11.0".to_string());
+        let deployment_target = match env::var("MACOSX_DEPLOYMENT_TARGET") {
+            Ok(value) => {
+                let mut parts = value.split('.');
+                let major = parts
+                    .next()
+                    .and_then(|p| p.parse::<u32>().ok())
+                    .unwrap_or(11);
+                if major < 11 {
+                    "11.0".to_string()
+                } else {
+                    value
+                }
+            }
+            Err(_) => "11.0".to_string(),
+        };
+        configure.env("MACOSX_DEPLOYMENT_TARGET", &deployment_target);
         configure.arg(format!(
             "-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}"
         ));
