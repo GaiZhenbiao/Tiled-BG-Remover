@@ -452,6 +452,9 @@
             if (operationMode === 'test_t2i') {
                 prompt = `Generate a beautiful scenery with a big, black text saying '(${tile.r},${tile.c})' in the center.`;
             } else {
+                if (!tile.originalPath) {
+                    throw new Error(`Original tile source missing for ${tile.r},${tile.c}. Please split again.`);
+                }
                 // Read via Rust to bypass scope restrictions
                 const b64Data = await invoke('load_image', { path: tile.originalPath }) as string;
                 const res = await fetch(b64Data);
@@ -588,7 +591,7 @@
   }
   
   async function regenerateTile(index: number) {
-    if (!tiles[index].path) {
+    if (!tiles[index].path || !tiles[index].originalPath) {
         try {
             await splitImageAndAssignPaths();
             tiles = [...tiles];

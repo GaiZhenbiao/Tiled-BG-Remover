@@ -31,6 +31,7 @@
     1,
     20000
   );
+  let smartQualitySliderPx = smartTileTolerancePx;
   let showTileLines = localStorage.getItem('show_tile_lines') === 'true';
   let isAdjustingGrid = false;
   let gridAdjustTimer: ReturnType<typeof setTimeout> | null = null;
@@ -123,6 +124,7 @@
   $: smartTileLimitMax = Math.max(imgWidth, imgHeight) > 0 ? Math.max(imgWidth, imgHeight) : aiOutputRes * 2;
   $: smartTileLimitMin = Math.min(aiOutputRes, smartTileLimitMax);
   $: smartTileTolerancePx = clampInt(smartTileTolerancePx, smartTileLimitMin, smartTileLimitMax);
+  $: smartQualitySliderPx = smartTileLimitMin + smartTileLimitMax - smartTileTolerancePx;
   $: smartMaxTileSize = smartTileTolerancePx;
 
   // Smart Grid Logic
@@ -238,6 +240,13 @@
       gridAdjustTimer = null;
     }, 250);
   }
+
+  function onSmartQualityInput(e: Event) {
+    const target = e.target as HTMLInputElement;
+    const visualValue = clampInt(parseInt(target.value), smartTileLimitMin, smartTileLimitMax);
+    smartTileTolerancePx = smartTileLimitMin + smartTileLimitMax - visualValue;
+    markGridAdjusting();
+  }
 </script>
 
 <main class="h-screen w-screen flex flex-col bg-white dark:bg-gray-900 text-gray-900 dark:text-white overflow-hidden transition-colors duration-200">
@@ -335,16 +344,16 @@
                     <span class="font-mono text-gray-700 dark:text-gray-200">{totalTiles}</span>
                   </div>
                   <div class="flex justify-between text-[10px] text-gray-500 dark:text-gray-400">
-                    <span>{$t('higherQuality')}</span>
                     <span>{$t('lowerQuality')}</span>
+                    <span>{$t('higherQuality')}</span>
                   </div>
                   <input
                     type="range"
                     min={smartTileLimitMin}
                     max={smartTileLimitMax}
                     step="1"
-                    bind:value={smartTileTolerancePx}
-                    on:input={markGridAdjusting}
+                    value={smartQualitySliderPx}
+                    on:input={onSmartQualityInput}
                     class="w-full accent-blue-500"
                   >
                 </div>
