@@ -24,6 +24,7 @@ fn patch_psd_cpp_layer_coordinates(source_dir: &Path) {
 fn main() {
     let output_dir = env::var("OUT_DIR").unwrap();
     let source_dir = Path::new(&output_dir).join("psd-cpp");
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
     if !source_dir.exists() {
         let status = Command::new("git")
@@ -38,17 +39,24 @@ fn main() {
     }
     patch_psd_cpp_layer_coordinates(&source_dir);
     env::set_current_dir(source_dir).unwrap();
+    let mut configure = Command::new("cmake");
+    configure.args(&[
+        "--preset",
+        "release",
+        format!("-DCMAKE_INSTALL_PREFIX={}", output_dir).as_str(),
+    ]);
+    if target_os == "macos" {
+        // Xcode 16 marks std::filesystem APIs unavailable below 10.15, and arm64 apps
+        // are expected to target macOS 11+.
+        let deployment_target =
+            env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "11.0".to_string());
+        configure.arg(format!(
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}"
+        ));
+    }
     assert!(
-        Command::new("cmake")
-            .args(&[
-                "--preset",
-                "release",
-                format!("-DCMAKE_INSTALL_PREFIX={}", output_dir).as_str()
-            ])
-            .status()
-            .unwrap()
-            .success(),
-        "huy"
+        configure.status().unwrap().success(),
+        "cmake configure failed for psd-cpp"
     );
     assert!(
         Command::new("cmake")
@@ -56,7 +64,7 @@ fn main() {
             .status()
             .unwrap()
             .success(),
-        "huy"
+        "cmake build/install failed for psd-cpp"
     );
 
     println!(
@@ -66,7 +74,6 @@ fn main() {
     println!("cargo:rustc-link-lib=static=psd");
     println!("cargo:rustc-link-lib=static=file");
     println!("cargo:rustc-link-lib=static=deflate");
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "macos" {
         println!("cargo:rustc-link-lib=dylib=c++");
     } else if target_os != "windows" {
