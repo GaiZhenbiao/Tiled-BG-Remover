@@ -24,7 +24,6 @@
   let overlap = 0.1;
   let aiOutputRes = 1024;
   let concurrency = 2;
-  let resizeInputToOutput = true;
   let smartGridEnabled = true;
   const smartGridMaxCount = 64;
   let smartTileTolerancePx = clampInt(
@@ -268,7 +267,7 @@
   <!-- Content -->
   <div class="flex-1 flex overflow-hidden">
     <!-- Sidebar Controls -->
-    <aside class="w-80 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden transition-colors">
+    <aside class="w-80 shrink-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden transition-colors">
       <!-- Tabs Header -->
       <div class="flex border-b border-gray-200 dark:border-gray-700">
         <button 
@@ -365,10 +364,6 @@
                   <option value={res}>{res} x {res}</option>
                 {/each}
               </select>
-              <label class="flex items-center gap-2 cursor-pointer mt-1">
-                <input type="checkbox" bind:checked={resizeInputToOutput} class="accent-blue-500">
-                <span class="text-xs text-gray-600 dark:text-gray-300">{$t('resizeInput')}</span>
-              </label>
             </div>
 
             {#if bgRemovalEnabled}
@@ -439,7 +434,7 @@
     </aside>
 
     <!-- Main View -->
-    <section class="flex-1 bg-gray-50 dark:bg-gray-900 relative flex items-center justify-center p-4 transition-colors">
+    <section class="flex-1 min-w-0 bg-gray-50 dark:bg-gray-900 relative flex items-center justify-center p-4 transition-colors">
       {#if !imagePath}
         <ImageUploader on:selected={(e) => handleImageSelected(e.detail)} />
       {:else}
@@ -449,7 +444,6 @@
           {cols} 
           {overlap} 
           {aiOutputRes}
-          {resizeInputToOutput}
           {bgRemovalEnabled}
           {keyColor}
           {tolerance}

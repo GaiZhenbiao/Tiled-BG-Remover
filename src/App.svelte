@@ -20,7 +20,6 @@
   let cols = 2;
   let overlap = 0.1;
   let aiOutputRes = 1024;
-  let resizeInputToOutput = true;
   let smartGridEnabled = true;
   
   // BG Removal State
@@ -278,10 +277,6 @@
                   <option value={res}>{res} x {res}</option>
                 {/each}
               </select>
-              <label class="flex items-center gap-2 cursor-pointer mt-1">
-                <input type="checkbox" bind:checked={resizeInputToOutput} class="accent-blue-500">
-                <span class="text-xs text-gray-300">Resize input tile to match output</span>
-              </label>
             </div>
 
             {#if bgRemovalEnabled}
@@ -363,7 +358,6 @@
           {cols} 
           {overlap} 
           {aiOutputRes}
-          {resizeInputToOutput}
           {bgRemovalEnabled}
           {keyColor}
           {tolerance}

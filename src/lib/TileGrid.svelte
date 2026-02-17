@@ -13,7 +13,6 @@
   export let overlap: number;
   export let isProcessing: boolean;
   export let aiOutputRes: number;
-  export let resizeInputToOutput: boolean;
   export let bgRemovalEnabled: boolean;
   export let keyColor: string;
   export let tolerance: number = 10;
@@ -29,6 +28,27 @@
   let isSplitting = false;
   let isMerging = false;
   let hoveredTileIndex: number | null = null;
+  let zoom = 1;
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  let panStartScrollLeft = 0;
+  let panStartScrollTop = 0;
+  let activePointerId: number | null = null;
+  let isSpacePressed = false;
+  let prevSrc = '';
+  let pendingFitOnLoad = true;
+  let containerW = 0;
+  let containerH = 0;
+  let contentW = 0;
+  let contentH = 0;
+  let surfaceW = 0;
+  let surfaceH = 0;
+  let contentLeft = 0;
+  let contentTop = 0;
+  const MIN_ZOOM = 0.01;
+  const MAX_ZOOM = 8;
+  const ZOOM_STEP = 1.15;
   
   // Grid visualization state
   let tiles: any[] = [];
@@ -47,6 +67,11 @@
   $: if (src) {
     loadImage(src);
   }
+
+  $: if (src && src !== prevSrc) {
+    prevSrc = src;
+    pendingFitOnLoad = true;
+  }
   
   $: if ((bgRemovalEnabled !== prevBG || keyColor !== prevKey || tolerance !== prevTol) && tiles.length > 0 && tiles.some(t => t.status === 'done') && !isProcessing && !isMerging) {
       prevBG = bgRemovalEnabled;
@@ -55,6 +80,16 @@
       mergeAll();
   }
   $: hasActiveWorkers = tiles.some((t) => t.status === 'processing');
+  $: contentW = Math.max(1, originalW * zoom);
+  $: contentH = Math.max(1, originalH * zoom);
+  $: surfaceW = Math.max(contentW, containerW);
+  $: surfaceH = Math.max(contentH, containerH);
+  $: contentLeft = (surfaceW - contentW) / 2;
+  $: contentTop = (surfaceH - contentH) / 2;
+  $: if (pendingFitOnLoad && containerW > 0 && containerH > 0 && originalW > 0 && originalH > 0) {
+    fitToViewport();
+    pendingFitOnLoad = false;
+  }
 
   async function loadImage(path: string) {
     try {
@@ -63,6 +98,176 @@
     } catch (e) {
       console.error("Failed to load image:", e);
     }
+  }
+
+  function resetView() {
+    isPanning = false;
+    activePointerId = null;
+    fitToViewport();
+  }
+
+  function clampZoom(value: number): number {
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
+  }
+
+  function centerView() {
+    if (!container) return;
+    requestAnimationFrame(() => {
+      if (!container) return;
+      const targetX = Math.max(0, (surfaceW - containerW) / 2);
+      const targetY = Math.max(0, (surfaceH - containerH) / 2);
+      container.scrollLeft = targetX;
+      container.scrollTop = targetY;
+    });
+  }
+
+  function getFitZoom(): number {
+    if (originalW <= 0 || originalH <= 0 || containerW <= 0 || containerH <= 0) return 1;
+    const fit = Math.min(containerW / originalW, containerH / originalH, 1);
+    return clampZoom(fit);
+  }
+
+  function fitToViewport() {
+    zoom = getFitZoom();
+    centerView();
+  }
+
+  function zoomByFactor(factor: number, clientX?: number, clientY?: number) {
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const targetClientX = clientX ?? (rect.left + rect.width / 2);
+    const targetClientY = clientY ?? (rect.top + rect.height / 2);
+    const cursorX = targetClientX - rect.left;
+    const cursorY = targetClientY - rect.top;
+
+    const nextZoom = clampZoom(zoom * factor);
+    if (Math.abs(nextZoom - zoom) < 0.0001) return;
+
+    const currentScrollLeft = container.scrollLeft;
+    const currentScrollTop = container.scrollTop;
+    const worldX = (currentScrollLeft + cursorX - contentLeft) / zoom;
+    const worldY = (currentScrollTop + cursorY - contentTop) / zoom;
+
+    zoom = nextZoom;
+
+    requestAnimationFrame(() => {
+      if (!container) return;
+      const nextContentW = Math.max(1, originalW * zoom);
+      const nextContentH = Math.max(1, originalH * zoom);
+      const nextSurfaceW = Math.max(nextContentW, containerW);
+      const nextSurfaceH = Math.max(nextContentH, containerH);
+      const nextContentLeft = (nextSurfaceW - nextContentW) / 2;
+      const nextContentTop = (nextSurfaceH - nextContentH) / 2;
+
+      const desiredLeft = worldX * zoom + nextContentLeft - cursorX;
+      const desiredTop = worldY * zoom + nextContentTop - cursorY;
+
+      const maxLeft = Math.max(0, nextSurfaceW - containerW);
+      const maxTop = Math.max(0, nextSurfaceH - containerH);
+      container.scrollLeft = Math.min(maxLeft, Math.max(0, desiredLeft));
+      container.scrollTop = Math.min(maxTop, Math.max(0, desiredTop));
+    });
+  }
+
+  function handleWheel(event: WheelEvent) {
+    if (!container) return;
+
+    // Trackpad pinch and Ctrl/Cmd+wheel => zoom around cursor.
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      const factor = Math.exp(-event.deltaY * 0.002);
+      zoomByFactor(factor, event.clientX, event.clientY);
+      return;
+    }
+  }
+
+  function handlePointerDown(event: PointerEvent) {
+    if (!container) return;
+    container.focus();
+
+    // Pan with middle button, or hold Space + left drag.
+    const canPan = event.button === 1 || (event.button === 0 && isSpacePressed);
+    if (!canPan) return;
+
+    isPanning = true;
+    activePointerId = event.pointerId;
+    panStartX = event.clientX;
+    panStartY = event.clientY;
+    panStartScrollLeft = container.scrollLeft;
+    panStartScrollTop = container.scrollTop;
+
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function handlePointerMove(event: PointerEvent) {
+    if (!isPanning || activePointerId !== event.pointerId) return;
+
+    const dx = event.clientX - panStartX;
+    const dy = event.clientY - panStartY;
+    container.scrollLeft = panStartScrollLeft - dx;
+    container.scrollTop = panStartScrollTop - dy;
+  }
+
+  function stopPanning(event?: PointerEvent) {
+    if (!isPanning) return;
+    if (event && activePointerId !== event.pointerId) return;
+    isPanning = false;
+    activePointerId = null;
+  }
+
+  function handleKeyDown(event: KeyboardEvent) {
+    if (event.key === ' ') {
+      isSpacePressed = true;
+      event.preventDefault();
+      return;
+    }
+
+    if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      zoomByFactor(ZOOM_STEP);
+      return;
+    }
+
+    if (event.key === '-' || event.key === '_') {
+      event.preventDefault();
+      zoomByFactor(1 / ZOOM_STEP);
+      return;
+    }
+
+    if ((event.key === '0' && (event.ctrlKey || event.metaKey)) || event.key === 'Home') {
+      event.preventDefault();
+      resetView();
+      return;
+    }
+
+    const panStep = event.shiftKey ? 120 : 40;
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      container.scrollLeft -= panStep;
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      container.scrollLeft += panStep;
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      container.scrollTop -= panStep;
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      container.scrollTop += panStep;
+    }
+  }
+
+  function handleKeyUp(event: KeyboardEvent) {
+    if (event.key === ' ') {
+      isSpacePressed = false;
+      event.preventDefault();
+    }
+  }
+
+  function handleCanvasBlur() {
+    isSpacePressed = false;
+    isPanning = false;
+    activePointerId = null;
   }
   
   $: if (rows && cols && imgElement) {
@@ -139,9 +344,6 @@
                 const b64Data = await invoke('load_image', { path: tile.originalPath }) as string;
                 const res = await fetch(b64Data);
                 inputBlob = await res.blob();
-                if (resizeInputToOutput) {
-                  inputBlob = await resizeBlob(inputBlob, aiOutputRes, aiOutputRes);
-                }
             }
             
             // API Call
@@ -155,11 +357,7 @@
              reader.onloadend = () => resolve(reader.result as string);
         });
         
-        if (resizeInputToOutput) {
-          await invoke('save_image_resized', { path: tile.path, base64Data: resultB64, width: Math.round(tile.w), height: Math.round(tile.h) });
-        } else {
-          await invoke('save_image', { path: tile.path, base64Data: resultB64 });
-        }
+        await invoke('save_image_resized', { path: tile.path, base64Data: resultB64, width: Math.round(tile.w), height: Math.round(tile.h) });
         
         tiles[index].status = 'done';
         dispatch('log', { type: 'success', message: `Tile ${tile.r},${tile.c} processed.` });
@@ -271,6 +469,10 @@
   function handleImageLoad() {
     if (resultSrc) return;
     calculateGrid();
+    if (pendingFitOnLoad) {
+      fitToViewport();
+      pendingFitOnLoad = false;
+    }
   }
   
   async function regenerateTile(index: number) {
@@ -287,43 +489,46 @@
     await mergeAll();
   }
 
-  async function resizeBlob(blob: Blob, width: number, height: number): Promise<Blob> {
-    const bitmap = await createImageBitmap(blob);
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      bitmap.close();
-      throw new Error('Failed to create canvas context for tile resize.');
-    }
-
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
-
-    const resized = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob((b) => resolve(b), 'image/png');
-    });
-    if (!resized) {
-      throw new Error('Failed to resize tile image.');
-    }
-    return resized;
-  }
 </script>
 
-<div class="relative w-full h-full flex items-center justify-center overflow-auto" bind:this={container}>
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<div
+  class="relative w-full h-full min-w-0 min-h-0 overflow-auto touch-none {isPanning ? 'cursor-grabbing' : (isSpacePressed ? 'cursor-grab' : 'cursor-default')}"
+  bind:this={container}
+  bind:clientWidth={containerW}
+  bind:clientHeight={containerH}
+  tabindex="0"
+  role="application"
+  aria-label="Tile canvas viewport"
+  on:wheel={handleWheel}
+  on:pointerdown={handlePointerDown}
+  on:pointermove={handlePointerMove}
+  on:pointerup={stopPanning}
+  on:pointercancel={stopPanning}
+  on:keydown={handleKeyDown}
+  on:keyup={handleKeyUp}
+  on:blur={handleCanvasBlur}
+>
   {#if displaySrc}
+    <div
+      class="relative select-none"
+      style="width: {surfaceW}px; height: {surfaceH}px;"
+    >
+    <div
+      class="absolute"
+      style="left: {contentLeft}px; top: {contentTop}px; width: {contentW}px; height: {contentH}px;"
+    >
     <div class="relative inline-block shadow-2xl {bgRemovalEnabled ? 'checkerboard' : ''}">
       <!-- Main Image -->
       <img 
         src={showOriginalInput ? displaySrc : (resultSrc || displaySrc)} 
         bind:this={imgElement}
         on:load={handleImageLoad}
-        class="max-w-none block"
-        style="max-height: 80vh; object-fit: contain;"
+        draggable="false"
+        class="block w-full h-full"
+        style="object-fit: fill;"
         alt="Source"
       />
       
@@ -395,6 +600,8 @@
          </div>
       {/if}
     </div>
+    </div>
+    </div>
   {/if}
 </div>
 
@@ -416,4 +623,5 @@
                       linear-gradient(-45deg, transparent 75%, #333 75%);
     background-color: #222;
   }
+
 </style>
