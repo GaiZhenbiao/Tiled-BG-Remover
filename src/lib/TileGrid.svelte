@@ -470,7 +470,7 @@
     activePointerId = null;
   }
   
-  $: if (rows && cols && imgElement) {
+  $: if (rows && cols && overlap >= 0 && imgElement) {
     calculateGrid();
   }
 
@@ -759,9 +759,10 @@
            {#each tiles as tile}
              <rect 
                x={tile.x} y={tile.y} width={tile.w} height={tile.h} 
-               fill={isAdjustingGrid && tile.status === 'pending' ? 'rgba(59, 130, 246, 0.08)' : 'none'}
-               stroke={tile.status === 'processing' ? '#f59e0b' : tile.status === 'done' ? (resultSrc ? (isAdjustingGrid ? 'rgba(74, 222, 128, 0.85)' : 'rgba(74, 222, 128, 0.3)') : '#4ade80') : tile.status === 'error' ? '#ef4444' : (isAdjustingGrid ? 'rgba(96, 165, 250, 0.95)' : 'rgba(255, 255, 255, 0.5)')}
-               stroke-width={resultSrc ? (isAdjustingGrid ? "2" : "1") : (isAdjustingGrid ? "3" : "2")}
+               fill={isAdjustingGrid ? 'rgba(59, 130, 246, 0.16)' : 'none'}
+               stroke={isAdjustingGrid ? 'rgba(37, 99, 235, 0.98)' : (tile.status === 'processing' ? '#f59e0b' : tile.status === 'done' ? (resultSrc ? 'rgba(74, 222, 128, 0.3)' : '#4ade80') : tile.status === 'error' ? '#ef4444' : 'rgba(255, 255, 255, 0.5)')}
+               stroke-width={isAdjustingGrid ? "4" : (resultSrc ? "1" : "2")}
+               vector-effect="non-scaling-stroke"
              />
            {/each}
         </svg>
