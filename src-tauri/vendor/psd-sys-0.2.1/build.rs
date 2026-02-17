@@ -38,56 +38,84 @@ fn main() {
         assert!(status.success(), "git clone failed");
     }
     patch_psd_cpp_layer_coordinates(&source_dir);
-    env::set_current_dir(source_dir).unwrap();
-    let mut configure = Command::new("cmake");
-    configure.args(&[
-        "--preset",
-        "release",
-        format!("-DCMAKE_INSTALL_PREFIX={}", output_dir).as_str(),
-    ]);
-    if target_os == "macos" {
-        // Xcode 16 marks std::filesystem APIs unavailable below 10.15, and arm64 apps
-        // are expected to target macOS 11+.
-        let deployment_target = match env::var("MACOSX_DEPLOYMENT_TARGET") {
-            Ok(value) => {
-                let mut parts = value.split('.');
-                let major = parts
-                    .next()
-                    .and_then(|p| p.parse::<u32>().ok())
-                    .unwrap_or(11);
-                if major < 11 {
-                    "11.0".to_string()
-                } else {
-                    value
-                }
-            }
-            Err(_) => "11.0".to_string(),
-        };
-        configure.env("MACOSX_DEPLOYMENT_TARGET", &deployment_target);
-        configure.arg(format!(
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}"
-        ));
-    } else if target_os == "windows" {
-        // Avoid mixed toolchains (e.g. GNU/Clang objects linked by MSVC link.exe), which can
-        // trigger LNK1143 COMDAT errors in CI.
+    if target_os == "windows" {
+        // Use the Visual Studio generator directly on Windows so CMake resolves MSVC
+        // toolchain itself (without requiring cl.exe in PATH), and avoid mixed-toolchain
+        // object issues that can cause LNK1143 in CI.
+        let build_dir = source_dir.join("build").join("release-msvc");
+        let mut configure = Command::new("cmake");
+        configure
+            .arg("-S")
+            .arg(&source_dir)
+            .arg("-B")
+            .arg(&build_dir)
+            .arg("-G")
+            .arg("Visual Studio 17 2022")
+            .arg("-A")
+            .arg("x64")
+            .arg(format!("-DCMAKE_INSTALL_PREFIX={output_dir}"))
+            .arg("-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF");
+        assert!(
+            configure.status().unwrap().success(),
+            "cmake configure failed for psd-cpp"
+        );
+        assert!(
+            Command::new("cmake")
+                .arg("--build")
+                .arg(&build_dir)
+                .arg("--config")
+                .arg("Release")
+                .arg("--target")
+                .arg("install")
+                .status()
+                .unwrap()
+                .success(),
+            "cmake build/install failed for psd-cpp"
+        );
+    } else {
+        env::set_current_dir(source_dir).unwrap();
+        let mut configure = Command::new("cmake");
         configure.args(&[
-            "-DCMAKE_C_COMPILER=cl.exe",
-            "-DCMAKE_CXX_COMPILER=cl.exe",
-            "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
+            "--preset",
+            "release",
+            format!("-DCMAKE_INSTALL_PREFIX={}", output_dir).as_str(),
         ]);
+        if target_os == "macos" {
+            // Xcode 16 marks std::filesystem APIs unavailable below 10.15, and arm64 apps
+            // are expected to target macOS 11+.
+            let deployment_target = match env::var("MACOSX_DEPLOYMENT_TARGET") {
+                Ok(value) => {
+                    let mut parts = value.split('.');
+                    let major = parts
+                        .next()
+                        .and_then(|p| p.parse::<u32>().ok())
+                        .unwrap_or(11);
+                    if major < 11 {
+                        "11.0".to_string()
+                    } else {
+                        value
+                    }
+                }
+                Err(_) => "11.0".to_string(),
+            };
+            configure.env("MACOSX_DEPLOYMENT_TARGET", &deployment_target);
+            configure.arg(format!(
+                "-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}"
+            ));
+        }
+        assert!(
+            configure.status().unwrap().success(),
+            "cmake configure failed for psd-cpp"
+        );
+        assert!(
+            Command::new("cmake")
+                .args(&["--build", "--preset", "release", "--target", "install"])
+                .status()
+                .unwrap()
+                .success(),
+            "cmake build/install failed for psd-cpp"
+        );
     }
-    assert!(
-        configure.status().unwrap().success(),
-        "cmake configure failed for psd-cpp"
-    );
-    assert!(
-        Command::new("cmake")
-            .args(&["--build", "--preset", "release", "--target", "install"])
-            .status()
-            .unwrap()
-            .success(),
-        "cmake build/install failed for psd-cpp"
-    );
 
     println!(
         "cargo:rustc-link-search=native={}",
