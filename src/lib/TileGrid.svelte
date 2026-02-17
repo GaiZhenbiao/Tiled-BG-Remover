@@ -42,7 +42,6 @@
   
   $: if (src) {
     loadImage(src);
-    resultSrc = ''; // Reset result when source changes
   }
   
   $: if ((bgRemovalEnabled !== prevBG || keyColor !== prevKey || tolerance !== prevTol) && tiles.length > 0 && tiles.some(t => t.status === 'done') && !isProcessing && !isMerging) {
@@ -205,6 +204,12 @@
         });
         
         tempDir = splitRes.temp_dir;
+        
+        // If the source image was in a temp dir that was just replaced, update the source
+        if (splitRes.new_input_path && splitRes.new_input_path !== src) {
+            dispatch('update_src', splitRes.new_input_path);
+        }
+
         let i = 0;
         for (const resTile of splitRes.tiles) {
             if (tiles[i]) {
@@ -287,7 +292,7 @@
       
       <!-- Overlay Grid -->
       {#if tiles.length > 0 && !showOriginalInput}
-        <svg class="absolute inset-0 pointer-events-none" viewBox={`0 0 ${originalW} ${originalH}`} preserveAspectRatio="none">
+        <svg class="absolute inset-0 pointer-events-none z-10" viewBox={`0 0 ${originalW} ${originalH}`} preserveAspectRatio="none">
            {#each tiles as tile}
              <rect 
                x={tile.x} y={tile.y} width={tile.w} height={tile.h} 
@@ -301,9 +306,9 @@
       
       <!-- Interactive Layer -->
       {#if tiles.length > 0 && !showOriginalInput}
-         <div class="absolute inset-0">
+         <div class="absolute inset-0 z-20">
            {#if isSplitting || isMerging}
-             <div class="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-10 backdrop-blur-[1px]">
+             <div class="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-30 backdrop-blur-[1px]">
                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-white mb-4"></div>
                <span class="text-white font-bold bg-black/50 px-3 py-1 rounded">
                  {isSplitting ? 'Splitting Image...' : 'Merging Tiles...'}
@@ -316,7 +321,7 @@
              <div 
                role="button"
                tabindex="0"
-               class="absolute group transition-colors border border-transparent hover:border-blue-400 hover:bg-blue-500/20 flex items-center justify-center"
+               class="absolute group transition-colors border border-transparent hover:border-blue-400 hover:bg-blue-500/20 flex items-center justify-center cursor-pointer"
                style="left: {tile.x / originalW * 100}%; top: {tile.y / originalH * 100}%; width: {tile.w / originalW * 100}%; height: {tile.h / originalH * 100}%;"
                on:click={() => regenerateTile(index)}
              >
@@ -327,7 +332,7 @@
                 {:else}
                   <button 
                     on:click|stopPropagation={() => regenerateTile(index)}
-                    class="hidden group-hover:block bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded shadow transform hover:scale-105 transition"
+                    class="opacity-0 group-hover:opacity-100 bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded shadow transform hover:scale-105 transition-all duration-200"
                   >
                     {tile.status === 'pending' ? $t('generate') : $t('regenerate')}
                   </button>

@@ -370,6 +370,7 @@
           bind:isProcessing 
           bind:resultSrc
           on:log={addLog}
+          on:update_src={(e) => imagePath = e.detail}
         />
       {/if}
     </section>

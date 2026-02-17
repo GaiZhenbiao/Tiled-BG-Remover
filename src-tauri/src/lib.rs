@@ -17,6 +17,7 @@ struct SplitResponse {
     original_width: u32,
     original_height: u32,
     temp_dir: String,
+    new_input_path: String,
 }
 
 #[tauri::command]
@@ -63,12 +64,12 @@ async fn split_img(
         let td = TempDir::new().map_err(|e| e.to_string())?;
         let td_path = td.path().to_path_buf();
         
-        let (tiles, w, h) = split_image(&path_clone, rows, cols, overlap_ratio, &td_path)?;
+        let (tiles, w, h, new_path) = split_image(&path_clone, rows, cols, overlap_ratio, &td_path)?;
         
-        Ok::<_, String>((td, tiles, w, h, td_path))
+        Ok::<_, String>((td, tiles, w, h, td_path, new_path))
     }).await.map_err(|e| e.to_string())??;
     
-    let (td, tiles, w, h, td_path_buf) = result;
+    let (td, tiles, w, h, td_path_buf, new_path) = result;
     
     let mut state_temp = state.temp_dir.lock().map_err(|_| "Failed to lock state".to_string())?;
     *state_temp = Some(td);
@@ -78,6 +79,7 @@ async fn split_img(
         original_width: w,
         original_height: h,
         temp_dir: td_path_buf.to_string_lossy().to_string(),
+        new_input_path: new_path,
     })
 }
 

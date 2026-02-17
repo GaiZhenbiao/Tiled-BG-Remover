@@ -1,8 +1,35 @@
-use image::{GenericImageView, ImageFormat, Rgba, RgbaImage, imageops::FilterType};
+use image::{DynamicImage, GenericImageView, ImageFormat, Rgba, RgbaImage, imageops::FilterType};
 use std::path::Path;
 use base64::{Engine as _, engine::general_purpose};
 use std::io::Cursor;
 use rayon::prelude::*;
+use exif::{In, Tag};
+
+fn open_image_with_orientation(path: &str) -> Result<DynamicImage, String> {
+    let mut img = image::open(path).map_err(|e| e.to_string())?;
+
+    // Try to read orientation from EXIF
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut reader = std::io::BufReader::new(file);
+    if let Ok(exif) = exif::Reader::new().read_from_container(&mut reader) {
+        if let Some(field) = exif.get_field(Tag::Orientation, In::PRIMARY) {
+            if let Some(orientation) = field.value.get_uint(0) {
+                img = match orientation {
+                    2 => img.fliph(),
+                    3 => img.rotate180(),
+                    4 => img.flipv(),
+                    5 => img.rotate90().fliph(),
+                    6 => img.rotate90(),
+                    7 => img.rotate270().fliph(),
+                    8 => img.rotate270(),
+                    _ => img,
+                };
+            }
+        }
+    }
+
+    Ok(img)
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct TileInfo {
@@ -40,7 +67,7 @@ fn is_key_color(p: &Rgba<u8>, color: &str, tolerance: u8) -> bool {
 }
 
 pub fn crop_image(input_path: &str, x: u32, y: u32, width: u32, height: u32, output_dir: &Path) -> Result<String, String> {
-    let img = image::open(input_path).map_err(|e| e.to_string())?;
+    let img = open_image_with_orientation(input_path)?;
     let cropped = img.crop_imm(x, y, width, height);
     
     let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
@@ -65,9 +92,16 @@ pub fn split_image(
     cols: u32, 
     overlap_ratio: f64, 
     output_dir: &Path
-) -> Result<(Vec<TileInfo>, u32, u32), String> {
-    let img = image::open(input_path).map_err(|e| e.to_string())?.to_rgba8();
+) -> Result<(Vec<TileInfo>, u32, u32, String), String> {
+    let img = open_image_with_orientation(input_path)?;
     let (w, h) = img.dimensions();
+
+    // Save a copy of the original to the output_dir to ensure it survives temp dir replacement
+    let original_copy_path = output_dir.join("original_source.png");
+    img.save_with_format(&original_copy_path, ImageFormat::Png).map_err(|e| e.to_string())?;
+    let new_input_path = original_copy_path.to_string_lossy().to_string();
+
+    let img_rgba = img.to_rgba8();
 
     let tile_w_raw = w as f64 / (cols as f64 - (cols as f64 - 1.0) * overlap_ratio);
     let tile_h_raw = h as f64 / (rows as f64 - (rows as f64 - 1.0) * overlap_ratio);
@@ -112,7 +146,7 @@ pub fn split_image(
         })
     }).collect();
 
-    Ok((tiles?, w, h))
+    Ok((tiles?, w, h, new_input_path))
 }
 
 pub fn merge_tiles(
