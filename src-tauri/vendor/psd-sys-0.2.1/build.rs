@@ -67,6 +67,14 @@ fn main() {
         configure.arg(format!(
             "-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}"
         ));
+    } else if target_os == "windows" {
+        // Avoid mixed toolchains (e.g. GNU/Clang objects linked by MSVC link.exe), which can
+        // trigger LNK1143 COMDAT errors in CI.
+        configure.args(&[
+            "-DCMAKE_C_COMPILER=cl.exe",
+            "-DCMAKE_CXX_COMPILER=cl.exe",
+            "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
+        ]);
     }
     assert!(
         configure.status().unwrap().success(),
