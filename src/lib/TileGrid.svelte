@@ -811,7 +811,7 @@
                x={tile.x} y={tile.y} width={tile.w} height={tile.h} 
                fill={isAdjustingGrid ? 'rgba(59, 130, 246, 0.16)' : 'none'}
                stroke={isAdjustingGrid ? 'rgba(37, 99, 235, 0.98)' : (tile.status === 'processing' ? '#f59e0b' : tile.status === 'done' ? (resultSrc ? 'rgba(74, 222, 128, 0.3)' : '#4ade80') : tile.status === 'error' ? '#ef4444' : 'rgba(255, 255, 255, 0.5)')}
-               stroke-width={isAdjustingGrid ? "4" : (resultSrc ? "1" : "2")}
+               stroke-width={isAdjustingGrid ? "1.25" : (resultSrc ? "1" : "2")}
                vector-effect="non-scaling-stroke"
              />
            {/each}
