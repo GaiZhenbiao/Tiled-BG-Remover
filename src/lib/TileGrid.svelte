@@ -321,7 +321,7 @@
              <div 
                role="button"
                tabindex="0"
-               class="absolute group transition-colors border border-transparent hover:border-blue-400 hover:bg-blue-500/20 flex items-center justify-center cursor-pointer"
+               class="absolute group transition-all duration-200 border border-transparent hover:border-blue-400 hover:bg-blue-500/30 flex items-center justify-center cursor-pointer overflow-hidden"
                style="left: {tile.x / originalW * 100}%; top: {tile.y / originalH * 100}%; width: {tile.w / originalW * 100}%; height: {tile.h / originalH * 100}%;"
                on:click={() => regenerateTile(index)}
              >
@@ -332,7 +332,7 @@
                 {:else}
                   <button 
                     on:click|stopPropagation={() => regenerateTile(index)}
-                    class="opacity-0 group-hover:opacity-100 bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded shadow transform hover:scale-105 transition-all duration-200"
+                    class="opacity-0 group-hover:opacity-100 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transform translate-y-2 group-hover:translate-y-0 transition-all duration-300 ease-out z-40"
                   >
                     {tile.status === 'pending' ? $t('generate') : $t('regenerate')}
                   </button>
