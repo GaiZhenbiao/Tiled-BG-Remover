@@ -123,7 +123,12 @@ fn main() {
     );
     println!("cargo:rustc-link-lib=static=psd");
     println!("cargo:rustc-link-lib=static=file");
-    println!("cargo:rustc-link-lib=static=deflate");
+    if target_os == "windows" {
+        // With MSVC generator libdeflate is installed as libdeflate.lib.
+        println!("cargo:rustc-link-lib=static=libdeflate");
+    } else {
+        println!("cargo:rustc-link-lib=static=deflate");
+    }
     if target_os == "macos" {
         println!("cargo:rustc-link-lib=dylib=c++");
     } else if target_os != "windows" {
