@@ -42,6 +42,7 @@
   let prevBG = bgRemovalEnabled;
   let prevKey = keyColor;
   let prevTol = tolerance;
+  let hasActiveWorkers = false;
   
   $: if (src) {
     loadImage(src);
@@ -53,6 +54,7 @@
       prevTol = tolerance;
       mergeAll();
   }
+  $: hasActiveWorkers = tiles.some((t) => t.status === 'processing');
 
   async function loadImage(path: string) {
     try {
@@ -363,7 +365,22 @@
                   <div class="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-[1px]">
                     <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
                   </div>
-                {:else if hoveredTileIndex === index}
+                {:else}
+                  {#if isProcessing && hasActiveWorkers && tile.status === 'pending'}
+                    <div class="absolute inset-0 bg-black/45"></div>
+                  {/if}
+
+                  {#if tile.status === 'done' && isProcessing && hasActiveWorkers}
+                    <div class="absolute inset-0 bg-black/35 flex items-center justify-center">
+                      <div class="rounded-full bg-green-500/95 ring-2 ring-green-300/70 w-8 h-8 flex items-center justify-center shadow-lg">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                      </div>
+                    </div>
+                  {/if}
+
+                  {#if hoveredTileIndex === index}
                   <button 
                     on:click|stopPropagation={() => regenerateTile(index)}
                     class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transition-all duration-150 ease-out z-40 cursor-pointer disabled:cursor-not-allowed"
@@ -371,6 +388,7 @@
                   >
                     {tile.status === 'pending' ? $t('generate') : $t('regenerate')}
                   </button>
+                  {/if}
                 {/if}
              </div>
            {/each}
