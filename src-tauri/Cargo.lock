@@ -1252,27 +1252,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gemini-tile-upscaler"
-version = "0.1.0"
-dependencies = [
- "base64 0.21.7",
- "image",
- "kamadak-exif",
- "psd-rs",
- "rayon",
- "reqwest 0.11.27",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-opener",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4382,6 +4361,27 @@ dependencies = [
  "flate2",
  "jpeg-decoder",
  "weezl",
+]
+
+[[package]]
+name = "tiled-bg-remover"
+version = "1.0.0"
+dependencies = [
+ "base64 0.21.7",
+ "image",
+ "kamadak-exif",
+ "psd-rs",
+ "rayon",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-opener",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

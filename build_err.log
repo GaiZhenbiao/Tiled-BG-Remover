@@ -82,19 +82,19 @@ https://svelte.dev/e/a11y_label_has_associated_control
 36:     </div>
 ✗ Build failed in 328ms
 error during build:
-[vite]: Rollup failed to resolve import "@tauri-apps/api/dialog" from "/Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/src/lib/ImageUploader.svelte".
+[vite]: Rollup failed to resolve import "@tauri-apps/api/dialog" from "/Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/src/lib/ImageUploader.svelte".
 This is most likely unintended because it can break your application at runtime.
 If you do want to externalize this module explicitly add it to
 `build.rollupOptions.external`
-    at viteLog (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46374:15)
-    at file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46432:18
-    at onwarn (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/@sveltejs/kit/src/exports/vite/index.js:933:9)
-    at file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46430:7
-    at onRollupLog (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46422:5)
-    at onLog (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46072:7)
-    at file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/rollup/dist/es/shared/node-entry.js:20958:32
-    at Object.logger [as onLog] (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/rollup/dist/es/shared/node-entry.js:22945:9)
-    at ModuleLoader.handleInvalidResolvedId (file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/rollup/dist/es/shared/node-entry.js:21689:26)
-    at file:///Users/treediagram/Downloads/bicycles_bgremove/gemini-tile-upscaler/node_modules/rollup/dist/es/shared/node-entry.js:21647:26
+    at viteLog (file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46374:15)
+    at file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46432:18
+    at onwarn (file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/@sveltejs/kit/src/exports/vite/index.js:933:9)
+    at file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46430:7
+    at onRollupLog (file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46422:5)
+    at onLog (file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:46072:7)
+    at file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/rollup/dist/es/shared/node-entry.js:20958:32
+    at Object.logger [as onLog] (file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/rollup/dist/es/shared/node-entry.js:22945:9)
+    at ModuleLoader.handleInvalidResolvedId (file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/rollup/dist/es/shared/node-entry.js:21689:26)
+    at file:///Users/treediagram/Downloads/bicycles_bgremove/tiled-bg-remover/node_modules/rollup/dist/es/shared/node-entry.js:21647:26
 beforeBuildCommand `npm run build` failed with exit code 1
        Error beforeBuildCommand `npm run build` failed with exit code 1

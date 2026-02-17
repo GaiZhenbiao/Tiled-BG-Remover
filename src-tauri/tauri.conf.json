@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tiled BG Remover",
-  "version": "0.1.0",
-  "identifier": "com.treediagram.gemini-tile-upscaler",
+  "version": "1.0.0",
+  "identifier": "com.treediagram.tiled-bg-remover",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
