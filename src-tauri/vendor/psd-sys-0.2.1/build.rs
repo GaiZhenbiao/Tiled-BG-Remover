@@ -21,6 +21,21 @@ fn patch_psd_cpp_layer_coordinates(source_dir: &Path) {
     }
 }
 
+fn resolve_deflate_link_name(lib_dir: &Path, target_os: &str) -> String {
+    if target_os == "windows" {
+        let candidates = ["deflatestatic", "libdeflate", "deflate"];
+        for candidate in candidates {
+            if lib_dir.join(format!("{candidate}.lib")).exists() {
+                println!("cargo:warning=psd-sys linking deflate variant: {candidate}");
+                return candidate.to_string();
+            }
+        }
+        // Most likely with MSVC builds of libdeflate.
+        return "deflatestatic".to_string();
+    }
+    "deflate".to_string()
+}
+
 fn main() {
     let output_dir = env::var("OUT_DIR").unwrap();
     let source_dir = Path::new(&output_dir).join("psd-cpp");
@@ -119,16 +134,13 @@ fn main() {
 
     println!(
         "cargo:rustc-link-search=native={}",
-        PathBuf::from(output_dir).join("lib").display()
+        PathBuf::from(&output_dir).join("lib").display()
     );
+    let lib_dir = PathBuf::from(&output_dir).join("lib");
     println!("cargo:rustc-link-lib=static=psd");
     println!("cargo:rustc-link-lib=static=file");
-    if target_os == "windows" {
-        // With MSVC generator libdeflate is installed as libdeflate.lib.
-        println!("cargo:rustc-link-lib=static=libdeflate");
-    } else {
-        println!("cargo:rustc-link-lib=static=deflate");
-    }
+    let deflate_link_name = resolve_deflate_link_name(&lib_dir, &target_os);
+    println!("cargo:rustc-link-lib=static={deflate_link_name}");
     if target_os == "macos" {
         println!("cargo:rustc-link-lib=dylib=c++");
     } else if target_os != "windows" {
