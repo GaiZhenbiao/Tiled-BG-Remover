@@ -27,6 +27,14 @@ const translations = {
     bgRemovedSuffix: "BGRemoved",
     keyColor: "Key Color",
     tolerance: "Tolerance",
+    mainSubject: "Main Subject",
+    subjectForPrompt: "Subject For Prompt",
+    subjectPlaceholder: "Enter subject (e.g. bicycle)",
+    usingSubject: "Using",
+    useDetectedSubject: "Use detected",
+    detectingSubject: "Detecting subject...",
+    noApiKeySubject: "Set API key to detect subject",
+    subjectDetectFailed: "Subject detection failed",
     resolutionInfo: "Resolution Info",
     wholeImage: "Whole Image",
     perTile: "Per Tile",
@@ -43,8 +51,12 @@ const translations = {
     settings: {
       title: "Settings",
       apiKey: "Google AI API Key",
+      apiUrl: "API Base URL",
       modelName: "Model Name",
+      verboseLogging: "Verbose Logging (log final prompts)",
       systemPrompt: "Prompt",
+      promptTemplate: "Prompt Template",
+      restoreDefault: "Restore default",
       cancel: "Cancel",
       save: "Save",
       experimental: "Experimental: try 'gemini-3-pro-image-preview' if available.",
@@ -75,6 +87,14 @@ const translations = {
     bgRemovedSuffix: "已去底",
     keyColor: "抠像颜色",
     tolerance: "容差",
+    mainSubject: "主体识别",
+    subjectForPrompt: "用于提示词的主体",
+    subjectPlaceholder: "输入主体（例如：自行车）",
+    usingSubject: "当前使用",
+    useDetectedSubject: "使用识别结果",
+    detectingSubject: "正在识别主体...",
+    noApiKeySubject: "设置 API Key 后可识别主体",
+    subjectDetectFailed: "主体识别失败",
     resolutionInfo: "分辨率信息",
     wholeImage: "完整图片",
     perTile: "单个区块",
@@ -91,8 +111,12 @@ const translations = {
     settings: {
       title: "设置",
       apiKey: "Google AI API 密钥",
+      apiUrl: "API 基础地址",
       modelName: "模型名称",
+      verboseLogging: "详细日志（记录最终提示词）",
       systemPrompt: "提示词",
+      promptTemplate: "提示词模板",
+      restoreDefault: "恢复默认",
       cancel: "取消",
       save: "保存",
       experimental: "实验性：如果可用，请尝试 'gemini-3-pro-image-preview'。",
@@ -123,6 +147,14 @@ const translations = {
     bgRemovedSuffix: "背景除去済み",
     keyColor: "クロマキー色",
     tolerance: "許容値",
+    mainSubject: "主要被写体",
+    subjectForPrompt: "プロンプト用の被写体",
+    subjectPlaceholder: "被写体を入力（例: 自転車）",
+    usingSubject: "使用中",
+    useDetectedSubject: "認識結果を使用",
+    detectingSubject: "被写体を認識中...",
+    noApiKeySubject: "被写体認識には API キーが必要です",
+    subjectDetectFailed: "被写体の認識に失敗しました",
     resolutionInfo: "解像度情報",
     wholeImage: "画像全体",
     perTile: "タイルごと",
@@ -139,21 +171,31 @@ const translations = {
     settings: {
       title: "設定",
       apiKey: "Google AI API キー",
+      apiUrl: "API ベース URL",
       modelName: "モデル名",
+      verboseLogging: "詳細ログ（最終プロンプトを記録）",
       systemPrompt: "プロンプト",
+      promptTemplate: "プロンプトテンプレート",
+      restoreDefault: "デフォルトに戻す",
       cancel: "キャンセル",
       save: "保存",
       experimental: "実験的：利用可能な場合は 'gemini-3-pro-image-preview' を試してください。",
       testMode: "テスト生成モード (モック)"
     }
   }
-};
+} as const;
 
-export const t = derived(locale, ($locale) => (key) => {
+export const t = derived(locale, ($locale) => (key: string) => {
   const keys = key.split('.');
-  let val = translations[$locale];
+  const localeTable =
+    (translations as Record<string, unknown>)[$locale] ??
+    (translations as Record<string, unknown>).en;
+  let val: unknown = localeTable;
   for (const k of keys) {
-    val = val?.[k];
+    if (!val || typeof val !== 'object') {
+      return key;
+    }
+    val = (val as Record<string, unknown>)[k];
   }
-  return val || key;
+  return typeof val === 'string' && val.length > 0 ? val : key;
 });

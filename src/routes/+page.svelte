@@ -7,6 +7,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { save } from '@tauri-apps/plugin-dialog';
   import { t } from '../lib/i18n';
+  import { detectMainSubject } from '../lib/api';
 
   let imagePath = '';
   let originalFilename = '';
@@ -82,6 +83,13 @@
   // Image Info
   let imgWidth = 0;
   let imgHeight = 0;
+  let detectedSubject = '';
+  let manualSubject = '';
+  let userEditedSubject = false;
+  let subjectStatus: 'idle' | 'detecting' | 'ready' | 'no_api' | 'error' = 'idle';
+  let subjectError = '';
+  let subjectDetectSeq = 0;
+  $: promptSubject = (manualSubject.trim() || detectedSubject || 'main subject');
   
   $: if (imagePath) {
     updateImageInfo();
@@ -90,6 +98,12 @@
   function clearInput() {
     imagePath = '';
     resultSrc = '';
+    detectedSubject = '';
+    manualSubject = '';
+    userEditedSubject = false;
+    subjectStatus = 'idle';
+    subjectError = '';
+    subjectDetectSeq += 1;
     logs = [];
   }
   
@@ -106,11 +120,11 @@
     }
   }
 
-  $: selectedModel = localStorage.getItem('gemini_model') || 'gemini-1.5-pro';
+  $: selectedModel = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
   
   // Re-check selected model when settings modal closes
   $: if (!showSettings) {
-    selectedModel = localStorage.getItem('gemini_model') || 'gemini-1.5-pro';
+    selectedModel = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
   }
 
   $: availableResolutions = selectedModel.includes('gemini-3-pro') 
@@ -142,6 +156,9 @@
   function handleImageSelected(path: string) {
     imagePath = path;
     resultSrc = '';
+    manualSubject = '';
+    userEditedSubject = false;
+    startSubjectDetection(path);
     
     // Store original filename for saving later
     const parts = path.split(/[\\/]/);
@@ -164,6 +181,20 @@
      });
      imagePath = newPath;
      resultSrc = '';
+     manualSubject = '';
+     userEditedSubject = false;
+     startSubjectDetection(newPath);
+  }
+
+  function onSubjectInput(event: Event) {
+    const target = event.target as HTMLInputElement;
+    manualSubject = target.value;
+    userEditedSubject = true;
+  }
+
+  function useDetectedSubject() {
+    manualSubject = detectedSubject || '';
+    userEditedSubject = false;
   }
 
   function addLog(e: any) {
@@ -246,6 +277,41 @@
     const visualValue = clampInt(parseInt(target.value), smartTileLimitMin, smartTileLimitMax);
     smartTileTolerancePx = smartTileLimitMin + smartTileLimitMax - visualValue;
     markGridAdjusting();
+  }
+
+  function startSubjectDetection(path: string) {
+    const seq = ++subjectDetectSeq;
+    detectedSubject = '';
+    subjectError = '';
+
+    const apiKey = localStorage.getItem('gemini_api_key') || '';
+    const operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
+    const apiUrl = localStorage.getItem('gemini_api_url') || 'https://generativelanguage.googleapis.com';
+    if (!path || !apiKey || operationMode === 'mock') {
+      subjectStatus = 'no_api';
+      return;
+    }
+
+    subjectStatus = 'detecting';
+    void (async () => {
+      try {
+        const b64 = (await invoke('load_image', { path })) as string;
+        const res = await fetch(b64);
+        const blob = await res.blob();
+        const subject = await detectMainSubject(blob, apiKey, apiUrl);
+        if (seq !== subjectDetectSeq) return;
+        detectedSubject = subject || 'main subject';
+        if (!userEditedSubject) {
+          manualSubject = detectedSubject;
+        }
+        subjectStatus = 'ready';
+      } catch (e: any) {
+        if (seq !== subjectDetectSeq) return;
+        subjectStatus = 'error';
+        subjectError = e?.message || String(e);
+        console.error('Subject detection failed:', e);
+      }
+    })();
   }
 </script>
 
@@ -431,6 +497,49 @@
               </div>
             </div>
 
+            <div class="bg-gray-50 dark:bg-gray-900/50 p-3 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-2 transition-colors">
+              <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{$t('mainSubject')}</span>
+              {#if !imagePath}
+                <span class="text-xs text-gray-500 dark:text-gray-400">-</span>
+              {:else if subjectStatus === 'detecting'}
+                <span class="text-xs text-blue-600 dark:text-blue-400">{$t('detectingSubject')}</span>
+              {:else if subjectStatus === 'ready'}
+                <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{detectedSubject}</span>
+              {:else if subjectStatus === 'no_api'}
+                <span class="text-xs text-gray-500 dark:text-gray-400">{$t('noApiKeySubject')}</span>
+              {:else}
+                <span class="text-xs text-red-600 dark:text-red-400">{$t('subjectDetectFailed')}{subjectError ? `: ${subjectError}` : ''}</span>
+              {/if}
+
+              {#if imagePath}
+                <div class="mt-1 flex flex-col gap-2">
+                  <label for="subject-input" class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    {$t('subjectForPrompt')}
+                  </label>
+                  <input
+                    id="subject-input"
+                    type="text"
+                    value={manualSubject}
+                    on:input={onSubjectInput}
+                    placeholder={$t('subjectPlaceholder')}
+                    class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded p-1.5 text-xs text-gray-900 dark:text-white transition-colors"
+                  />
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-[10px] text-gray-500 dark:text-gray-400 truncate">{$t('usingSubject')}: {promptSubject}</span>
+                    <button
+                      type="button"
+                      class="text-[10px] px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      on:mousedown|preventDefault
+                      on:click={useDetectedSubject}
+                      disabled={!detectedSubject}
+                    >
+                      {$t('useDetectedSubject')}
+                    </button>
+                  </div>
+                </div>
+              {/if}
+            </div>
+
             <hr class="border-gray-200 dark:border-gray-700">
 
             <button 
@@ -477,6 +586,7 @@
           {showTileLines}
           {isAdjustingGrid}
           {showOriginalInput}
+          detectedSubject={promptSubject}
           bind:isProcessing 
           bind:resultSrc
           bind:exportTiles

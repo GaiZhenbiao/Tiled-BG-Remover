@@ -6,17 +6,39 @@
   
   export let concurrency = 2;
   export let theme = 'dark';
+
+  const DEFAULT_PROMPT_TEMPLATE = `Task: Generate one tile from a larger image.
+Main subject: {subject}
+Preserve the main subject exactly as-is. Do not change subject shape, geometry, pose, colors, materials, logos, or text.
+Background rule: {background_instruction}
+Background must be a single flat color only, with clean edges and absolutely no shadows, gradients, reflections, glow, or texture.
+Tile position: row {tile_row}/{tile_rows}, column {tile_col}/{tile_cols}.
+Use the full-image reference for global consistency. Keep scale, edges, and details consistent across tiles.
+Return only the generated tile image.`;
   
   let apiKey = localStorage.getItem('gemini_api_key') || '';
-  let modelName = localStorage.getItem('gemini_model') || 'gemini-1.5-pro';
-  let prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
+  let apiUrl = localStorage.getItem('gemini_api_url') || 'https://generativelanguage.googleapis.com';
+  let modelName = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
+  let promptTemplate =
+    localStorage.getItem('gemini_prompt_template') ||
+    localStorage.getItem('gemini_prompt') ||
+    DEFAULT_PROMPT_TEMPLATE;
   let operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
+  let verboseLogging = localStorage.getItem('verbose_logging') === 'true';
+
+  function restorePromptTemplate() {
+    promptTemplate = DEFAULT_PROMPT_TEMPLATE;
+  }
   
   function save() {
     localStorage.setItem('gemini_api_key', apiKey);
+    localStorage.setItem('gemini_api_url', apiUrl.trim());
     localStorage.setItem('gemini_model', modelName);
-    localStorage.setItem('gemini_prompt', prompt);
+    localStorage.setItem('gemini_prompt_template', promptTemplate);
+    // Backward compatibility for any older reads.
+    localStorage.setItem('gemini_prompt', promptTemplate);
     localStorage.setItem('gemini_operation_mode', operationMode);
+    localStorage.setItem('verbose_logging', verboseLogging.toString());
     localStorage.setItem('concurrency', concurrency.toString());
     dispatch('close');
   }
@@ -54,10 +76,20 @@
           <option value="test_t2i">Test (AI Text-to-Image)</option>
         </select>
       </div>
+
+      <label class="flex items-center justify-between gap-3 rounded border border-gray-200 dark:border-gray-700 p-2">
+        <span class="text-sm text-gray-700 dark:text-gray-300">{$t('settings.verboseLogging')}</span>
+        <input type="checkbox" bind:checked={verboseLogging} class="accent-blue-600">
+      </label>
       
       <div>
         <label for="api-key" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.apiKey')}</label>
         <input id="api-key" type="password" bind:value={apiKey} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors" placeholder="AIzaSy..." disabled={operationMode === 'mock'} />
+      </div>
+
+      <div>
+        <label for="api-url" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.apiUrl')}</label>
+        <input id="api-url" type="text" bind:value={apiUrl} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors" placeholder="https://generativelanguage.googleapis.com" disabled={operationMode === 'mock'} />
       </div>
 
       <div>
@@ -77,8 +109,23 @@
       </div>
 
       <div>
-        <label for="system-prompt" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.systemPrompt')}</label>
-        <textarea id="system-prompt" bind:value={prompt} rows="3" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors"></textarea>
+        <div class="mb-1 flex items-center justify-between gap-2">
+          <label for="system-prompt" class="block text-sm font-medium text-gray-700 dark:text-gray-300">{$t('settings.promptTemplate')}</label>
+          <button
+            type="button"
+            on:click={restorePromptTemplate}
+            class="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          >
+            {$t('settings.restoreDefault')}
+          </button>
+        </div>
+        <textarea id="system-prompt" bind:value={promptTemplate} rows="7" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors"></textarea>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          Placeholders: <code>{'{subject}'}</code>, <code>{'{background_instruction}'}</code>,
+          <code>{'{key_color}'}</code>, <code>{'{tile_row}'}</code>, <code>{'{tile_col}'}</code>,
+          <code>{'{tile_rows}'}</code>, <code>{'{tile_cols}'}</code>, <code>{'{tile_width}'}</code>,
+          <code>{'{tile_height}'}</code>, <code>{'{image_width}'}</code>, <code>{'{image_height}'}</code>.
+        </p>
       </div>
     </div>
 

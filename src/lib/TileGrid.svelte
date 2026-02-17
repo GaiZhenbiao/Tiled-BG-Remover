@@ -21,6 +21,7 @@
   export let showTileLines: boolean = true;
   export let isAdjustingGrid: boolean = false;
   export let showOriginalInput: boolean = false;
+  export let detectedSubject: string = '';
   export let exportTiles: any[] = [];
 
   let container: HTMLDivElement;
@@ -42,6 +43,8 @@
   let isSpacePressed = false;
   let prevSrc = '';
   let pendingFitOnLoad = true;
+  let cachedFullImageBlob: Blob | null = null;
+  let cachedFullImageSrc = '';
   let containerW = 0;
   let containerH = 0;
   let contentW = 0;
@@ -53,6 +56,15 @@
   const MIN_ZOOM = 0.01;
   const MAX_ZOOM = 8;
   const ZOOM_STEP = 1.15;
+  const DEFAULT_PROMPT_TEMPLATE =
+    `Task: Generate one tile from a larger image.\n` +
+    `Main subject: {subject}\n` +
+    `Preserve the main subject exactly as-is. Do not change subject shape, geometry, pose, colors, materials, logos, or text.\n` +
+    `Background rule: {background_instruction}\n` +
+    `Background must be a single flat color only, with clean edges and absolutely no shadows, gradients, reflections, glow, or texture.\n` +
+    `Tile position: row {tile_row}/{tile_rows}, column {tile_col}/{tile_cols}.\n` +
+    `Use the full-image reference for global consistency. Keep scale, edges, and details consistent across tiles.\n` +
+    `Return only the generated tile image.`;
   
   // Grid visualization state
   let tiles: any[] = [];
@@ -77,6 +89,8 @@
   $: if (src && src !== prevSrc) {
     prevSrc = src;
     pendingFitOnLoad = true;
+    cachedFullImageBlob = null;
+    cachedFullImageSrc = '';
   }
   
   $: if ((bgRemovalEnabled !== prevBG || keyColor !== prevKey || tolerance !== prevTol) && tiles.length > 0 && tiles.some(t => t.status === 'done') && !isProcessing && !isMerging) {
@@ -114,9 +128,83 @@
     try {
       const b64 = await invoke('load_image', { path });
       displaySrc = b64 as string;
+      cachedFullImageBlob = null;
+      cachedFullImageSrc = '';
     } catch (e) {
       console.error("Failed to load image:", e);
     }
+  }
+
+  function getPromptTemplate(): string {
+    return (
+      localStorage.getItem('gemini_prompt_template') ||
+      localStorage.getItem('gemini_prompt') ||
+      DEFAULT_PROMPT_TEMPLATE
+    );
+  }
+
+  function getApiBaseUrl(): string {
+    return localStorage.getItem('gemini_api_url') || 'https://generativelanguage.googleapis.com';
+  }
+
+  function isVerboseLoggingEnabled(): boolean {
+    return localStorage.getItem('verbose_logging') === 'true';
+  }
+
+  function renderPromptTemplate(template: string, context: Record<string, string>): string {
+    return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, key) => {
+      return context[key] ?? '';
+    });
+  }
+
+  function getKeyColorBackgroundInstruction(color: string): string {
+    const c = color.toLowerCase();
+    if (!bgRemovalEnabled) {
+      return 'Remove background to solid pure white (#FFFFFF). No shadows or gradients.';
+    }
+    if (c === 'white') {
+      return 'Remove background to solid pure white (#FFFFFF). No shadows or gradients.';
+    }
+    if (c === 'black') {
+      return 'Remove background to solid pure black (#000000). No shadows or gradients.';
+    }
+    if (c === 'red') {
+      return 'Remove background to solid pure red (#FF0000). No shadows or gradients.';
+    }
+    if (c === 'blue') {
+      return 'Remove background to solid pure blue (#0000FF). No shadows or gradients.';
+    }
+    return 'Remove background to solid pure green (#00FF00). No shadows or gradients.';
+  }
+
+  function buildPromptForTile(tile: any): string {
+    const template = getPromptTemplate();
+    const context: Record<string, string> = {
+      subject: detectedSubject || 'main subject',
+      background_instruction: getKeyColorBackgroundInstruction(keyColor),
+      key_color: bgRemovalEnabled ? keyColor : 'white',
+      tile_row: String(tile.r + 1),
+      tile_col: String(tile.c + 1),
+      tile_rows: String(rows),
+      tile_cols: String(cols),
+      tile_width: String(Math.round(tile.w)),
+      tile_height: String(Math.round(tile.h)),
+      image_width: String(Math.round(originalW)),
+      image_height: String(Math.round(originalH))
+    };
+    return renderPromptTemplate(template, context).trim();
+  }
+
+  async function getFullImageBlob(): Promise<Blob | null> {
+    if (!displaySrc) return null;
+    if (cachedFullImageBlob && cachedFullImageSrc === displaySrc) {
+      return cachedFullImageBlob;
+    }
+    const response = await fetch(displaySrc);
+    const blob = await response.blob();
+    cachedFullImageBlob = blob;
+    cachedFullImageSrc = displaySrc;
+    return blob;
   }
 
   function normalizeMergedImageSrc(value: string): string {
@@ -437,17 +525,19 @@
             await new Promise(r => setTimeout(r, 200));
         } else {
             const apiKey = localStorage.getItem('gemini_api_key');
-            const model = localStorage.getItem('gemini_model') || 'gemini-1.5-pro'; 
+            const model = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image'; 
+            const apiBaseUrl = getApiBaseUrl();
             
             if (!apiKey) throw new Error("API Key not found. Please set it in Settings.");
 
-            let prompt = localStorage.getItem('gemini_prompt') || 'Remove the background to be pure white. No any shadows. The foreground is part of a bicycle.';
+            let prompt = buildPromptForTile(tile);
             
             if (bgRemovalEnabled) {
-              prompt = `Remove the background and replace it with pure ${keyColor}. The background must be a solid, flat ${keyColor} color with no shadows, gradients or textures. The foreground object is part of a bicycle. Focus on clean edges.`;
+              prompt += `\nKeying color selected: ${keyColor}.`;
             }
 
             let inputBlob: Blob | null = null;
+            let fullImageBlob: Blob | null = null;
 
             if (operationMode === 'test_t2i') {
                 prompt = `Generate a beautiful scenery with a big, black text saying '(${tile.r},${tile.c})' in the center.`;
@@ -459,10 +549,21 @@
                 const b64Data = await invoke('load_image', { path: tile.originalPath }) as string;
                 const res = await fetch(b64Data);
                 inputBlob = await res.blob();
+                fullImageBlob = await getFullImageBlob();
             }
             
             // API Call
-            resultBlob = await generateImage(inputBlob, prompt, model, apiKey);
+            if (isVerboseLoggingEnabled()) {
+              const escapedPrompt = prompt.replace(/\n/g, '\\n');
+              dispatch('log', {
+                type: 'info',
+                message: `[Prompt ${tile.r},${tile.c}] ${escapedPrompt}`
+              });
+            }
+            resultBlob = await generateImage(inputBlob, prompt, model, apiKey, {
+              apiBaseUrl,
+              fullImageBlob
+            });
         }
         
         // Save result

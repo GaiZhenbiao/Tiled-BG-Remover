@@ -2,10 +2,11 @@
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { listen } from '@tauri-apps/api/event';
+  import type { UnlistenFn } from '@tauri-apps/api/event';
   import { t } from '../lib/i18n';
 
   const dispatch = createEventDispatcher();
-  let unlisten;
+  let unlisten: UnlistenFn | null = null;
 
   async function selectFile() {
     const selected = await open({
@@ -24,7 +25,7 @@
     }
   }
 
-  function handleDrop(e) {
+  function handleDrop(e: DragEvent) {
     e.preventDefault();
     // Fallback for browser drop if Tauri event doesn't catch it
     if (e.dataTransfer && e.dataTransfer.files.length > 0) {

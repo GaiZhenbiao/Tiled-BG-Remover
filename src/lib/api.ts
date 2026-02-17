@@ -1,38 +1,141 @@
-export async function generateImage(imageBlob: Blob | null, prompt: string, model: string, apiKey: string): Promise<Blob> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  
-  let parts: any[] = [{ text: prompt }];
+type GenerateImageOptions = {
+  apiBaseUrl?: string;
+  fullImageBlob?: Blob | null;
+};
 
-  if (imageBlob) {
-      const reader = new FileReader();
-      reader.readAsDataURL(imageBlob);
-      const base64Data = await new Promise<string>((resolve) => {
-        reader.onloadend = () => resolve(reader.result as string);
-      });
-      // Strip prefix data:image/...;base64,
-      const base64Image = base64Data.split(',')[1];
-      const mimeType = base64Data.split(';')[0].split(':')[1];
-      
-      parts = [
-        { inline_data: { mime_type: mimeType, data: base64Image } },
-        { text: prompt }
-      ];
+function normalizeApiBaseUrl(apiBaseUrl?: string): string {
+  const fallback = 'https://generativelanguage.googleapis.com';
+  const base = (apiBaseUrl || fallback).trim();
+  if (!base) return fallback;
+  return base.replace(/\/+$/, '');
+}
+
+async function blobToInlineData(blob: Blob): Promise<{ mime_type: string; data: string }> {
+  const reader = new FileReader();
+  reader.readAsDataURL(blob);
+  const base64Data = await new Promise<string>((resolve) => {
+    reader.onloadend = () => resolve(reader.result as string);
+  });
+  const [prefix, data] = base64Data.split(',');
+  const mimeType = prefix?.split(';')[0]?.split(':')[1] || blob.type || 'image/png';
+  return {
+    mime_type: mimeType,
+    data
+  };
+}
+
+function extractResponseParts(data: any): any[] {
+  return data?.candidates?.[0]?.content?.parts || [];
+}
+
+function extractFirstText(data: any): string {
+  const parts = extractResponseParts(data);
+  for (const part of parts) {
+    if (typeof part?.text === 'string' && part.text.trim()) {
+      return part.text.trim();
+    }
   }
-  
+  return '';
+}
+
+function isLikelySubject(candidate: string): boolean {
+  if (!candidate) return false;
+  if (!/[a-z]/i.test(candidate)) return false;
+  if (candidate.length < 3) return false;
+  if (/^[a-z]$/i.test(candidate)) return false;
+
+  const words = candidate.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 4) return false;
+  if (words.some((w) => w.length <= 1)) return false;
+
+  const invalid = new Set(['unknown', 'none', 'n a', 'n/a', 'subject', 'object']);
+  if (invalid.has(candidate.toLowerCase())) return false;
+
+  return true;
+}
+
+function normalizeSubject(raw: string): string {
+  if (!raw) return '';
+
+  const segments = raw
+    .split(/\r?\n|[;,|]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  for (const seg of segments) {
+    const cleaned = seg
+      .toLowerCase()
+      .replace(/^["'`([{]+|["'`)\]}]+$/g, '')
+      .replace(/^\(?[a-z0-9]\)?[.):\-]\s*/i, '')
+      .replace(/^(the|a|an)\s+/i, '')
+      .replace(/[^a-z0-9\s-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (isLikelySubject(cleaned)) {
+      return cleaned;
+    }
+  }
+
+  const fallback = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return isLikelySubject(fallback) ? fallback : '';
+}
+
+function extractFirstInlineImage(data: any): Blob | null {
+  const parts = extractResponseParts(data);
+  for (const part of parts) {
+    const inlineData = part?.inline_data || part?.inlineData;
+    if (inlineData?.data) {
+      return b64toBlob(
+        inlineData.data,
+        inlineData.mime_type || inlineData.mimeType || 'image/png'
+      );
+    }
+  }
+  return null;
+}
+
+export async function generateImage(
+  imageBlob: Blob | null,
+  prompt: string,
+  model: string,
+  apiKey: string,
+  options: GenerateImageOptions = {}
+): Promise<Blob> {
+  const baseUrl = normalizeApiBaseUrl(options.apiBaseUrl);
+  const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const parts: any[] = [];
+  if (options.fullImageBlob) {
+    const fullInline = await blobToInlineData(options.fullImageBlob);
+    parts.push({ text: "Reference full image context (for global consistency):" });
+    parts.push({ inline_data: fullInline });
+  }
+  if (imageBlob) {
+    const tileInline = await blobToInlineData(imageBlob);
+    parts.push({ text: "Target tile to generate/edit:" });
+    parts.push({ inline_data: tileInline });
+  }
+  parts.push({ text: prompt });
+
   const payload = {
-    contents: [{
-      role: "user",
-      parts: parts
-    }],
+    contents: [
+      {
+        role: "user",
+        parts
+      }
+    ],
     generationConfig: {
-      temperature: 0.4,
+      temperature: 0.35,
       maxOutputTokens: 2048,
       responseModalities: ["IMAGE"],
       seed: Math.floor(Math.random() * 2147483647) + Date.now() % 1000000
     }
   };
-
-  console.log(`Sending request to ${model} with prompt: "${prompt}" (Has Image: ${!!imageBlob})`);
 
   const response = await fetch(url, {
     method: 'POST',
@@ -46,31 +149,77 @@ export async function generateImage(imageBlob: Blob | null, prompt: string, mode
   }
 
   const data = await response.json();
-  
-  // Try to parse image from response
-  // 1. Check for inline_data (standard multimodal response for images)
-  const responseParts = data.candidates?.[0]?.content?.parts || [];
-  for (const part of responseParts) {
-    // console.log("Checking part keys:", Object.keys(part));
-    const inlineData = part.inline_data || part.inlineData;
-    if (inlineData && inlineData.data) {
-      return b64toBlob(inlineData.data, inlineData.mime_type || inlineData.mimeType || 'image/png');
-    }
-  }
-  
-  // 2. Fallback: Check if text contains a base64 string (sometimes models output text)
-  // This is hacky but might work for some experimental models
-  for (const part of responseParts) {
-    if (part.text && part.text.length > 1000) { // arbitrary length check
-       // Try to find base64 pattern?
-       // For now, assume if the model doesn't return inline_data, it failed for our purpose.
-    }
-  }
-  
-  console.warn("No image found in response", JSON.stringify(data, null, 2));
-  // Include a snippet of the JSON in the error message for debugging
-  const snippet = JSON.stringify(data).substring(0, 200);
+  const image = extractFirstInlineImage(data);
+  if (image) return image;
+
+  const snippet = JSON.stringify(data).substring(0, 240);
   throw new Error(`Model did not return an image. Response: ${snippet}...`);
+}
+
+export async function detectMainSubject(
+  imageBlob: Blob,
+  apiKey: string,
+  apiBaseUrl?: string
+): Promise<string> {
+  const baseUrl = normalizeApiBaseUrl(apiBaseUrl);
+  const model = 'gemini-3-flash-preview';
+  const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const imageInline = await blobToInlineData(imageBlob);
+
+  async function runSubjectPrompt(prompt: string, maxTokens = 48): Promise<string> {
+    const payload = {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inline_data: imageInline },
+            { text: prompt }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: maxTokens,
+        responseModalities: ["TEXT"]
+      }
+    };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Subject detection API Error ${response.status}: ${errText}`);
+    }
+
+    const data = await response.json();
+    return extractFirstText(data);
+  }
+
+  const first = normalizeSubject(
+    await runSubjectPrompt(
+      "Identify the primary foreground object. Return one concise common noun phrase in English (1-3 words), lowercase, no explanation."
+    )
+  );
+  if (first) return first;
+
+  try {
+    const retry = normalizeSubject(
+      await runSubjectPrompt(
+        "Return exactly one common object noun phrase in English, 1-3 words, lowercase. Never return a single letter or symbol. Example outputs: bicycle, road bicycle, person, shoe.",
+        32
+      )
+    );
+    if (retry) return retry;
+  } catch {
+    // Preserve UX by falling back when retry parsing fails after first pass was invalid.
+  }
+
+  return 'main subject';
 }
 
 function b64toBlob(b64Data: string, contentType = '', sliceSize = 512) {
