@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { generateImage } from './api';
   import { generateMockTile } from './mock_api';
@@ -21,10 +21,14 @@
   export let showTileLines: boolean = true;
   export let isAdjustingGrid: boolean = false;
   export let showOriginalInput: boolean = false;
+  export let exportTiles: any[] = [];
 
   let container: HTMLDivElement;
   let imgElement: HTMLImageElement;
   let displaySrc = '';
+  let resultPreviewSrc = '';
+  let resultPreviewObjectUrl: string | null = null;
+  let previewBuildId = 0;
   let isSplitting = false;
   let isMerging = false;
   let hoveredTileIndex: number | null = null;
@@ -68,6 +72,8 @@
     loadImage(src);
   }
 
+  $: buildResultPreview(resultSrc);
+
   $: if (src && src !== prevSrc) {
     prevSrc = src;
     pendingFitOnLoad = true;
@@ -80,6 +86,19 @@
       mergeAll();
   }
   $: hasActiveWorkers = tiles.some((t) => t.status === 'processing');
+  $: exportTiles = tiles
+    .filter((tile) => tile.path || tile.originalPath)
+    .map((tile) => ({
+      r: tile.r,
+      c: tile.c,
+      x: Math.round(tile.x),
+      y: Math.round(tile.y),
+      width: Math.round(tile.w),
+      height: Math.round(tile.h),
+      path: tile.path || '',
+      originalPath: tile.originalPath || '',
+      status: tile.status || 'pending'
+    }));
   $: contentW = Math.max(1, originalW * zoom);
   $: contentH = Math.max(1, originalH * zoom);
   $: surfaceW = Math.max(contentW, containerW);
@@ -97,6 +116,99 @@
       displaySrc = b64 as string;
     } catch (e) {
       console.error("Failed to load image:", e);
+    }
+  }
+
+  function normalizeMergedImageSrc(value: string): string {
+    const trimmed = (value || '').trim();
+    if (!trimmed) return '';
+    return trimmed.startsWith('data:') ? trimmed : `data:image/png;base64,${trimmed}`;
+  }
+
+  type ParsedMergedImage = {
+    mime: string;
+    base64: string;
+    dataUrl: string;
+  };
+
+  function parseMergedImage(value: string): ParsedMergedImage | null {
+    const normalized = normalizeMergedImageSrc(value);
+    if (!normalized) return null;
+
+    const marker = ';base64,';
+    const markerIndex = normalized.indexOf(marker);
+    if (!normalized.startsWith('data:') || markerIndex < 0) {
+      return {
+        mime: 'image/png',
+        base64: normalized,
+        dataUrl: `data:image/png;base64,${normalized}`
+      };
+    }
+
+    return {
+      mime: normalized.slice(5, markerIndex),
+      base64: normalized.slice(markerIndex + marker.length),
+      dataUrl: normalized
+    };
+  }
+
+  function base64ToBlob(base64: string, mime: string): Blob {
+    let sanitized = (base64 || '').replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+    const mod = sanitized.length % 4;
+    if (mod) {
+      sanitized += '='.repeat(4 - mod);
+    }
+
+    const binary = atob(sanitized);
+    const chunkSize = 0x8000;
+    const chunks: Uint8Array[] = [];
+    for (let i = 0; i < binary.length; i += chunkSize) {
+      const slice = binary.slice(i, i + chunkSize);
+      const bytes = new Uint8Array(slice.length);
+      for (let j = 0; j < slice.length; j++) {
+        bytes[j] = slice.charCodeAt(j);
+      }
+      chunks.push(bytes);
+    }
+    return new Blob(chunks, { type: mime || 'image/png' });
+  }
+
+  function cleanupResultPreviewUrl() {
+    if (resultPreviewObjectUrl) {
+      URL.revokeObjectURL(resultPreviewObjectUrl);
+      resultPreviewObjectUrl = null;
+    }
+  }
+
+  async function buildResultPreview(value: string) {
+    previewBuildId += 1;
+    const currentBuildId = previewBuildId;
+
+    const parsed = parseMergedImage(value);
+    if (!parsed) {
+      cleanupResultPreviewUrl();
+      resultPreviewSrc = '';
+      return;
+    }
+
+    try {
+      const blob = base64ToBlob(parsed.base64, parsed.mime);
+      if (currentBuildId !== previewBuildId) return;
+      const url = URL.createObjectURL(blob);
+      cleanupResultPreviewUrl();
+      resultPreviewObjectUrl = url;
+      resultPreviewSrc = url;
+    } catch {
+      if (currentBuildId !== previewBuildId) return;
+      cleanupResultPreviewUrl();
+      resultPreviewSrc = parsed.dataUrl;
+    }
+  }
+
+  function handleMainImageError() {
+    if (!showOriginalInput && resultPreviewSrc) {
+      resultPreviewSrc = '';
+      dispatch('log', { type: 'error', message: 'Failed to render merged preview. Falling back to source image.' });
     }
   }
 
@@ -390,7 +502,7 @@
             tolerance: tolerance
         });
         
-        resultSrc = mergedB64;
+        resultSrc = normalizeMergedImageSrc(mergedB64);
         dispatch('log', { type: 'success', message: 'Processing complete.' });
       } finally {
         isMerging = false;
@@ -489,6 +601,10 @@
     await mergeAll();
   }
 
+  onDestroy(() => {
+    cleanupResultPreviewUrl();
+  });
+
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -523,9 +639,10 @@
     <div class="relative inline-block shadow-2xl {bgRemovalEnabled ? 'checkerboard' : ''}">
       <!-- Main Image -->
       <img 
-        src={showOriginalInput ? displaySrc : (resultSrc || displaySrc)} 
+        src={showOriginalInput ? displaySrc : (resultPreviewSrc || displaySrc)} 
         bind:this={imgElement}
         on:load={handleImageLoad}
+        on:error={handleMainImageError}
         draggable="false"
         class="block w-full h-full"
         style="object-fit: fill;"

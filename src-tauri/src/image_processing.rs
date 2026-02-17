@@ -36,17 +36,29 @@ fn open_image_with_orientation(path: &str) -> Result<DynamicImage, String> {
 fn save_png_fast(path: &Path, image: &RgbaImage) -> Result<(), String> {
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     let writer = BufWriter::new(file);
-    let encoder = PngEncoder::new_with_quality(writer, CompressionType::Fast, PngFilterType::NoFilter);
+    let encoder =
+        PngEncoder::new_with_quality(writer, CompressionType::Fast, PngFilterType::NoFilter);
     encoder
-        .write_image(image.as_raw(), image.width(), image.height(), ColorType::Rgba8)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            ColorType::Rgba8,
+        )
         .map_err(|e| e.to_string())
 }
 
 fn encode_png_data_url_fast(image: &RgbaImage) -> Result<String, String> {
     let mut buffer = Cursor::new(Vec::new());
-    let encoder = PngEncoder::new_with_quality(&mut buffer, CompressionType::Fast, PngFilterType::NoFilter);
+    let encoder =
+        PngEncoder::new_with_quality(&mut buffer, CompressionType::Fast, PngFilterType::NoFilter);
     encoder
-        .write_image(image.as_raw(), image.width(), image.height(), ColorType::Rgba8)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            ColorType::Rgba8,
+        )
         .map_err(|e| e.to_string())?;
 
     let b64 = general_purpose::STANDARD.encode(buffer.get_ref());
@@ -87,7 +99,14 @@ fn is_key_color(p: &Rgba<u8>, color: &str, tolerance: u8) -> bool {
     }
 }
 
-pub fn crop_image(input_path: &str, x: u32, y: u32, width: u32, height: u32, output_dir: &Path) -> Result<String, String> {
+pub fn crop_image(
+    input_path: &str,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    output_dir: &Path,
+) -> Result<String, String> {
     let img = open_image_with_orientation(input_path)?.to_rgba8();
     let cropped = crop_imm(&img, x, y, width, height).to_image();
 
@@ -105,7 +124,9 @@ pub fn crop_image(input_path: &str, x: u32, y: u32, width: u32, height: u32, out
 
 pub fn save_resized_tile(path: &str, data: &[u8], width: u32, height: u32) -> Result<(), String> {
     let img = image::load_from_memory(data).map_err(|e| e.to_string())?;
-    let resized = img.resize_exact(width, height, ResizeFilterType::Lanczos3).to_rgba8();
+    let resized = img
+        .resize_exact(width, height, ResizeFilterType::Lanczos3)
+        .to_rgba8();
     save_png_fast(Path::new(path), &resized)
 }
 
@@ -281,7 +302,10 @@ pub fn merge_tiles(
                 if fallback.exists() {
                     final_path = fallback.to_string_lossy().to_string();
                 } else {
-                    return Err(format!("Tile result and original both missing for {},{}", job.r, job.c));
+                    return Err(format!(
+                        "Tile result and original both missing for {},{}",
+                        job.r, job.c
+                    ));
                 }
             }
 
@@ -310,12 +334,16 @@ pub fn merge_tiles(
     let mut final_img = RgbaImage::new(original_w, original_h);
     let final_stride = original_w as usize * 4;
     let x_ramp: Vec<f32> = if overlap_w > 0 {
-        (0..overlap_w).map(|x| x as f32 / overlap_w as f32).collect()
+        (0..overlap_w)
+            .map(|x| x as f32 / overlap_w as f32)
+            .collect()
     } else {
         Vec::new()
     };
     let y_ramp: Vec<f32> = if overlap_h > 0 {
-        (0..overlap_h).map(|y| y as f32 / overlap_h as f32).collect()
+        (0..overlap_h)
+            .map(|y| y as f32 / overlap_h as f32)
+            .collect()
     } else {
         Vec::new()
     };
@@ -340,7 +368,11 @@ pub fn merge_tiles(
                 }
 
                 let in_overlap_y = has_top && y < overlap_h;
-                let y_factor = if in_overlap_y { y_ramp[y as usize] } else { 1.0 };
+                let y_factor = if in_overlap_y {
+                    y_ramp[y as usize]
+                } else {
+                    1.0
+                };
                 let tile_row_offset = y as usize * tile_stride;
                 let final_row_offset = global_y as usize * final_stride;
 
@@ -423,9 +455,12 @@ pub fn merge_tiles(
 
                     let inv = 1.0 - factor;
                     final_raw[dst_idx] = (inv * old_px[0] as f32 + factor * new_px[0] as f32) as u8;
-                    final_raw[dst_idx + 1] = (inv * old_px[1] as f32 + factor * new_px[1] as f32) as u8;
-                    final_raw[dst_idx + 2] = (inv * old_px[2] as f32 + factor * new_px[2] as f32) as u8;
-                    final_raw[dst_idx + 3] = (inv * old_px[3] as f32 + factor * new_px[3] as f32) as u8;
+                    final_raw[dst_idx + 1] =
+                        (inv * old_px[1] as f32 + factor * new_px[1] as f32) as u8;
+                    final_raw[dst_idx + 2] =
+                        (inv * old_px[2] as f32 + factor * new_px[2] as f32) as u8;
+                    final_raw[dst_idx + 3] =
+                        (inv * old_px[3] as f32 + factor * new_px[3] as f32) as u8;
                 }
             }
         }

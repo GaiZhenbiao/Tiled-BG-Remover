@@ -1258,6 +1258,7 @@ dependencies = [
  "base64 0.21.7",
  "image",
  "kamadak-exif",
+ "psd-rs",
  "rayon",
  "reqwest 0.11.27",
  "serde",
@@ -3041,6 +3042,20 @@ checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "psd-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "444c69ef9c6428c9e2b7bfdf00ee8bd82cbd82fa53fd18805744948999ef8c0b"
+dependencies = [
+ "psd-sys",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "psd-sys"
+version = "0.2.1"
 
 [[package]]
 name = "qoi"

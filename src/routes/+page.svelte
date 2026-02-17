@@ -76,6 +76,7 @@
   // Processing state
   let isProcessing = false;
   let resultSrc = '';
+  let exportTiles: any[] = [];
   
   // Image Info
   let imgWidth = 0;
@@ -170,15 +171,31 @@
   async function saveResult() {
     if (!resultSrc) return;
     
-    let defaultPath = originalFilename ? `${originalFilename}_${$t('bgRemoved')}.png` : 'upscaled_image.png';
+    const localizedSuffix = String($t('bgRemovedSuffix'));
+    let defaultPath = originalFilename
+      ? `${originalFilename}_${localizedSuffix}.png`
+      : `upscaled_${localizedSuffix}.png`;
 
     const path = await save({
       filters: [{ name: 'Image', extensions: ['png'] }],
       defaultPath: defaultPath
     });
     if (path) {
-      await invoke('save_merged_image', { path, base64Data: resultSrc });
-      logs = [{ type: 'success', message: `Image saved to ${path}`, time: new Date().toLocaleTimeString() }, ...logs];
+      if (exportTiles.length > 0) {
+        const exportRes: any = await invoke('save_export_bundle', {
+          path,
+          mergedBase64: resultSrc,
+          tiles: exportTiles
+        });
+        logs = [{
+          type: 'success',
+          message: `Saved PNG + layered PSD (${exportRes.tile_count} layers): ${exportRes.psd_path}`,
+          time: new Date().toLocaleTimeString()
+        }, ...logs];
+      } else {
+        await invoke('save_merged_image', { path, base64Data: resultSrc });
+        logs = [{ type: 'success', message: `Image saved to ${path}`, time: new Date().toLocaleTimeString() }, ...logs];
+      }
     }
   }
 
@@ -453,6 +470,7 @@
           {showOriginalInput}
           bind:isProcessing 
           bind:resultSrc
+          bind:exportTiles
           on:log={addLog}
         />
 

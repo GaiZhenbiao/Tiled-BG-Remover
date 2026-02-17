@@ -31,4 +31,7 @@ kamadak-exif = "0.5"
 reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 tempfile = "3.8"
+psd-rs = "0.3"
 
+[patch.crates-io]
+psd-sys = { path = "vendor/psd-sys-0.2.1" }
