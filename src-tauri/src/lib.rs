@@ -180,12 +180,50 @@ fn resolve_tile_source(tile: &ExportTile) -> Result<(PathBuf, bool), String> {
     ))
 }
 
+fn resolve_input_source_path(input_path: Option<&str>, tiles: &[ExportTile]) -> Option<PathBuf> {
+    if let Some(path) = input_path.map(str::trim).filter(|p| !p.is_empty()) {
+        let direct_path = PathBuf::from(path);
+        if direct_path.is_file() {
+            return Some(direct_path);
+        }
+    }
+
+    for tile in tiles {
+        let original = tile.original_path.trim();
+        if original.is_empty() {
+            continue;
+        }
+
+        let original_path = PathBuf::from(original);
+        if let Some(parent) = original_path.parent() {
+            let candidate = parent.join("original_source.png");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
 fn write_psd(
     psd_path: &Path,
+    source_image: &RgbaImage,
     merged_image: &RgbaImage,
     layers: &[LayerExport],
 ) -> Result<(), String> {
     let mut document = Document::new();
+
+    let mut input_layer = Layer::new("Input Source");
+    input_layer
+        .set_image(
+            source_image.as_raw(),
+            source_image.height() as usize,
+            source_image.width() as usize,
+        )
+        .map_err(|e| e.to_string())?;
+    input_layer.set_offset(0, 0);
+    document.push(input_layer).map_err(|e| e.to_string())?;
 
     // Keep a full-size base layer so PSD canvas size always matches merged output dimensions.
     let mut merged_layer = Layer::new("Merged Result");
@@ -284,6 +322,7 @@ fn save_export_bundle(
     path: String,
     merged_base64: String,
     tiles: Vec<ExportTile>,
+    source_path: Option<String>,
 ) -> Result<SaveBundleResponse, String> {
     if tiles.is_empty() {
         return Err("No tile metadata available for export.".to_string());
@@ -314,6 +353,24 @@ fn save_export_bundle(
     let mut sorted_tiles = tiles;
     sorted_tiles.sort_unstable_by_key(|t| (t.r, t.c));
 
+    let source_image_path = resolve_input_source_path(source_path.as_deref(), &sorted_tiles)
+        .ok_or_else(|| "Failed to resolve input source image for PSD export.".to_string())?;
+    let source_bytes = fs::read(&source_image_path).map_err(|e| e.to_string())?;
+    let source_png = ensure_png_bytes(&source_bytes)?;
+    let mut source_img = image::load_from_memory(&source_png)
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+
+    if source_img.width() != merged_img.width() || source_img.height() != merged_img.height() {
+        source_img = image::DynamicImage::ImageRgba8(source_img)
+            .resize_exact(
+                merged_img.width(),
+                merged_img.height(),
+                image::imageops::FilterType::Lanczos3,
+            )
+            .to_rgba8();
+    }
+
     let mut layers: Vec<LayerExport> = Vec::with_capacity(sorted_tiles.len());
 
     for tile in sorted_tiles {
@@ -336,7 +393,7 @@ fn save_export_bundle(
         });
     }
 
-    write_psd(&psd_path, &merged_img, &layers)?;
+    write_psd(&psd_path, &source_img, &merged_img, &layers)?;
 
     Ok(SaveBundleResponse {
         merged_path: output_path.to_string_lossy().to_string(),

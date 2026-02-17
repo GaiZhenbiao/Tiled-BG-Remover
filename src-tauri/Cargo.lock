@@ -4365,7 +4365,7 @@ dependencies = [
 
 [[package]]
 name = "tiled-bg-remover"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "base64 0.21.7",
  "image",

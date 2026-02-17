@@ -218,7 +218,8 @@
         const exportRes: any = await invoke('save_export_bundle', {
           path,
           mergedBase64: resultSrc,
-          tiles: exportTiles
+          tiles: exportTiles,
+          sourcePath: imagePath
         });
         logs = [{
           type: 'success',
