@@ -5,7 +5,7 @@
   const dispatch = createEventDispatcher();
   
   export let concurrency = 2;
-  export let theme = 'dark';
+  export let theme = 'auto';
 
   const DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE = `Task: Generate one tile from a larger image.
 Main subject: {subject}
@@ -104,6 +104,7 @@ Return only the generated tile image.`;
       <div>
         <label for="theme" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.appearance')}</label>
         <select id="theme" bind:value={theme} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors">
+          <option value="auto">{$t('settings.themeAuto')}</option>
           <option value="light">{$t('settings.themeLight')}</option>
           <option value="dark">{$t('settings.themeDark')}</option>
         </select>

@@ -13,7 +13,10 @@
   let originalFilename = '';
   let showSettings = false;
   let showCropModal = false;
-  let theme = localStorage.getItem('theme') || 'dark';
+  type ThemeMode = 'auto' | 'light' | 'dark';
+  let theme = parseThemeMode(localStorage.getItem('theme'));
+  let themeMediaQuery: MediaQueryList | null = null;
+  let systemPrefersDark = false;
   
   // Sidebar Tabs
   let activeTab = 'controls'; // 'controls' or 'logs'
@@ -55,6 +58,24 @@
   let showOriginalInput = false;
   
   onMount(() => {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    themeMediaQuery = mql;
+    systemPrefersDark = mql.matches;
+    const handleSystemThemeChange = (event: MediaQueryListEvent) => {
+      systemPrefersDark = event.matches;
+      if (theme === 'auto') {
+        applyTheme();
+      }
+    };
+    if (typeof mql.addEventListener === 'function') {
+      mql.addEventListener('change', handleSystemThemeChange);
+    } else {
+      const legacyMql = mql as MediaQueryList & {
+        addListener?: (listener: (event: MediaQueryListEvent) => void) => void;
+      };
+      legacyMql.addListener?.(handleSystemThemeChange);
+    }
+
     if (localStorage.getItem('bg_removal_enabled') !== null) {
       bgRemovalEnabled = localStorage.getItem('bg_removal_enabled') === 'true';
     }
@@ -62,6 +83,19 @@
       concurrency = parseInt(localStorage.getItem('concurrency') || '2');
     }
     applyTheme();
+
+    return () => {
+      const cleanupMql = themeMediaQuery;
+      if (!cleanupMql) return;
+      if (typeof cleanupMql.removeEventListener === 'function') {
+        cleanupMql.removeEventListener('change', handleSystemThemeChange);
+      } else {
+        const legacyCleanupMql = cleanupMql as MediaQueryList & {
+          removeListener?: (listener: (event: MediaQueryListEvent) => void) => void;
+        };
+        legacyCleanupMql.removeListener?.(handleSystemThemeChange);
+      }
+    };
   });
 
   onDestroy(() => {
@@ -77,12 +111,16 @@
     tolerance = parseInt(localStorage.getItem('key_tolerance') || '10');
   }
 
-  function applyTheme() {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
+  function parseThemeMode(value: string | null): ThemeMode {
+    if (value === 'light' || value === 'dark' || value === 'auto') {
+      return value;
     }
+    return 'auto';
+  }
+
+  function applyTheme() {
+    const isDark = theme === 'dark' || (theme === 'auto' && systemPrefersDark);
+    document.documentElement.classList.toggle('dark', isDark);
   }
 
   $: if (theme) {
