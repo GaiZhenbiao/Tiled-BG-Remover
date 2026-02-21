@@ -18,12 +18,13 @@
   // Sidebar Tabs
   let activeTab = 'controls'; // 'controls' or 'logs'
   let logs: { type: string, message: string, time: string }[] = [];
+  let selectedModel = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
   
   // State
   let rows = 2;
   let cols = 2;
-  let overlap = 0.1;
-  let aiOutputRes = 1024;
+  let overlap = 0;
+  let aiOutputRes = selectedModel.includes('gemini-3-pro') ? 2048 : 1024;
   let concurrency = 2;
   let smartGridEnabled = true;
   const smartGridMaxCount = 64;
@@ -127,11 +128,15 @@
     }
   }
 
-  $: selectedModel = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
-  
   // Re-check selected model when settings modal closes
   $: if (!showSettings) {
     selectedModel = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
+  }
+
+  let previousModel = selectedModel;
+  $: if (selectedModel !== previousModel) {
+    aiOutputRes = selectedModel.includes('gemini-3-pro') ? 2048 : 1024;
+    previousModel = selectedModel;
   }
 
   $: availableResolutions = selectedModel.includes('gemini-3-pro') 

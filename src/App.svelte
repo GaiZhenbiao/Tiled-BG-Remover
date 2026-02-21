@@ -18,7 +18,7 @@
   // State
   let rows = 2;
   let cols = 2;
-  let overlap = 0.1;
+  let overlap = 0;
   let aiOutputRes = 1024;
   let smartGridEnabled = true;
   
