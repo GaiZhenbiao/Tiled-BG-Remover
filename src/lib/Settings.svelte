@@ -41,6 +41,7 @@ Return only the generated tile image.`;
   let operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
   let verboseLogging = localStorage.getItem('verbose_logging') === 'true';
   let useFullImageReference = localStorage.getItem('use_full_image_reference') === 'true';
+  let showApiKey = false;
 
   function restorePromptTemplateWithReference() {
     promptTemplateWithReference = DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE;
@@ -51,7 +52,7 @@ Return only the generated tile image.`;
   }
   
   function save() {
-    localStorage.setItem('gemini_api_key', apiKey);
+    localStorage.setItem('gemini_api_key', apiKey.trim());
     localStorage.setItem('gemini_api_url', apiUrl.trim());
     localStorage.setItem('gemini_model', modelName);
     localStorage.setItem('gemini_prompt_template_with_reference', promptTemplateWithReference);
@@ -65,6 +66,10 @@ Return only the generated tile image.`;
     localStorage.setItem('use_full_image_reference', useFullImageReference.toString());
     localStorage.setItem('concurrency', concurrency.toString());
     dispatch('close');
+  }
+
+  function clearApiKey() {
+    apiKey = '';
   }
 </script>
 
@@ -113,12 +118,36 @@ Return only the generated tile image.`;
       
       <div>
         <label for="api-key" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.apiKey')}</label>
-        <input id="api-key" type="password" bind:value={apiKey} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors" placeholder="AIzaSy..." disabled={operationMode === 'mock'} />
+        <div class="flex items-center gap-2">
+          <input
+            id="api-key"
+            type={showApiKey ? 'text' : 'password'}
+            bind:value={apiKey}
+            class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors"
+            placeholder="AIzaSy..."
+          />
+          <button
+            type="button"
+            class="shrink-0 px-2 py-2 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            on:click={() => (showApiKey = !showApiKey)}
+          >
+            {showApiKey ? $t('settings.hide') : $t('settings.show')}
+          </button>
+          <button
+            type="button"
+            class="shrink-0 px-2 py-2 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            on:click={clearApiKey}
+            disabled={!apiKey}
+          >
+            {$t('settings.clear')}
+          </button>
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{$t('settings.apiKeyHint')}</p>
       </div>
 
       <div>
         <label for="api-url" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.apiUrl')}</label>
-        <input id="api-url" type="text" bind:value={apiUrl} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors" placeholder="https://generativelanguage.googleapis.com" disabled={operationMode === 'mock'} />
+        <input id="api-url" type="text" bind:value={apiUrl} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors" placeholder="https://generativelanguage.googleapis.com" />
       </div>
 
       <div>
