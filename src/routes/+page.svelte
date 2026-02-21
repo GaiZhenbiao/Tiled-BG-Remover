@@ -659,9 +659,11 @@
     </aside>
 
     <!-- Main View -->
-    <section class="flex-1 min-w-0 bg-gray-50 dark:bg-gray-900 relative flex items-center justify-center p-4 transition-colors">
+    <section class="flex-1 min-w-0 min-h-0 bg-gray-50 dark:bg-gray-900 relative overflow-hidden transition-colors">
       {#if !imagePath}
-        <ImageUploader on:selected={(e) => handleImageSelected(e.detail)} />
+        <div class="w-full h-full flex items-center justify-center p-6">
+          <ImageUploader on:selected={(e) => handleImageSelected(e.detail)} />
+        </div>
       {:else}
         <TileGrid 
           src={imagePath} 
