@@ -24,6 +24,48 @@ async function blobToInlineData(blob: Blob): Promise<{ mime_type: string; data: 
   };
 }
 
+async function convertBlobToJpeg(blob: Blob, quality = 0.92, maxSide = 1024): Promise<Blob> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return blob;
+
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const longestSide = Math.max(bitmap.width, bitmap.height);
+    const scale = longestSide > maxSide ? maxSide / longestSide : 1;
+    const targetWidth = Math.max(1, Math.round(bitmap.width * scale));
+    const targetHeight = Math.max(1, Math.round(bitmap.height * scale));
+
+    if (blob.type === 'image/jpeg' && scale === 1) {
+      bitmap.close();
+      return blob;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bitmap.close();
+      return blob;
+    }
+
+    // Flatten any alpha against white before JPEG encoding.
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+    bitmap.close();
+
+    const jpegBlob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, 'image/jpeg', quality);
+    });
+    return jpegBlob ?? blob;
+  } catch {
+    return blob;
+  }
+}
+
 function extractResponseParts(data: any): any[] {
   return data?.candidates?.[0]?.content?.parts || [];
 }
@@ -165,7 +207,8 @@ export async function detectMainSubject(
   const model = 'gemini-3-flash-preview';
   const url = `${baseUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-  const imageInline = await blobToInlineData(imageBlob);
+  const jpegBlob = await convertBlobToJpeg(imageBlob);
+  const imageInline = await blobToInlineData(jpegBlob);
 
   async function runSubjectPrompt(prompt: string, maxTokens = 48): Promise<string> {
     const payload = {
