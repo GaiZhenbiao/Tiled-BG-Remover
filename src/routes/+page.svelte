@@ -42,6 +42,16 @@
   let bgRemovalEnabled = false;
   let keyColor = localStorage.getItem('key_color') || 'green';
   let tolerance = parseInt(localStorage.getItem('key_tolerance') || '10');
+  type NonBgColorMode = 'white' | 'black' | 'green' | 'blue' | 'custom';
+  const NON_BG_COLOR_HEX: Record<Exclude<NonBgColorMode, 'custom'>, string> = {
+    white: '#FFFFFF',
+    black: '#000000',
+    green: '#00FF00',
+    blue: '#0000FF'
+  };
+  let nonBgColorMode = parseNonBgColorMode(localStorage.getItem('non_bg_color_mode'));
+  let nonBgCustomHex = normalizeHexColor(localStorage.getItem('non_bg_custom_hex') || '#FFFFFF');
+  let nonBgBackgroundHex = resolveNonBgHex(nonBgColorMode, nonBgCustomHex);
   let showOriginalInput = false;
   
   onMount(() => {
@@ -82,6 +92,9 @@
 
   $: localStorage.setItem('smart_tile_tolerance_px', smartTileTolerancePx.toString());
   $: localStorage.setItem('show_tile_lines', showTileLines.toString());
+  $: localStorage.setItem('non_bg_color_mode', nonBgColorMode);
+  $: localStorage.setItem('non_bg_custom_hex', normalizeHexColor(nonBgCustomHex));
+  $: nonBgBackgroundHex = resolveNonBgHex(nonBgColorMode, nonBgCustomHex);
   
   // Processing state
   let isProcessing = false;
@@ -269,6 +282,29 @@
   function clampInt(value: number, min: number, max: number): number {
     if (Number.isNaN(value)) return min;
     return Math.min(max, Math.max(min, Math.round(value)));
+  }
+
+  function parseNonBgColorMode(value: string | null): NonBgColorMode {
+    if (value === 'black' || value === 'green' || value === 'blue' || value === 'custom') {
+      return value;
+    }
+    return 'white';
+  }
+
+  function normalizeHexColor(value: string): string {
+    const raw = (value || '').trim();
+    const match = raw.match(/^#?([0-9a-fA-F]{6})$/);
+    if (match) {
+      return `#${match[1].toUpperCase()}`;
+    }
+    return '#FFFFFF';
+  }
+
+  function resolveNonBgHex(mode: NonBgColorMode, customHex: string): string {
+    if (mode === 'custom') {
+      return normalizeHexColor(customHex);
+    }
+    return NON_BG_COLOR_HEX[mode];
   }
 
   function computeSmartGridCount(size: number, maxTileSize: number, overlapRatio: number): number {
@@ -470,6 +506,77 @@
               </select>
             </div>
 
+            {#if !bgRemovalEnabled}
+              <div class="bg-gray-50 dark:bg-gray-900/50 p-3 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-2 transition-colors">
+                <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{$t('backgroundColor')}</span>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    on:click={() => nonBgColorMode = 'white'}
+                    title={$t('colorWhite')}
+                    aria-label={$t('colorWhite')}
+                    class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'white' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+                  >
+                    <span class="w-5 h-5 rounded border border-gray-300" style="background-color: #FFFFFF"></span>
+                  </button>
+                  <button
+                    type="button"
+                    on:click={() => nonBgColorMode = 'black'}
+                    title={$t('colorBlack')}
+                    aria-label={$t('colorBlack')}
+                    class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'black' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+                  >
+                    <span class="w-5 h-5 rounded border border-gray-300" style="background-color: #000000"></span>
+                  </button>
+                  <button
+                    type="button"
+                    on:click={() => nonBgColorMode = 'green'}
+                    title={$t('colorGreen')}
+                    aria-label={$t('colorGreen')}
+                    class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'green' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+                  >
+                    <span class="w-5 h-5 rounded border border-gray-300" style="background-color: #00FF00"></span>
+                  </button>
+                  <button
+                    type="button"
+                    on:click={() => nonBgColorMode = 'blue'}
+                    title={$t('colorBlue')}
+                    aria-label={$t('colorBlue')}
+                    class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'blue' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+                  >
+                    <span class="w-5 h-5 rounded border border-gray-300" style="background-color: #0000FF"></span>
+                  </button>
+                  <button
+                    type="button"
+                    on:click={() => nonBgColorMode = 'custom'}
+                    title={$t('colorCustom')}
+                    aria-label={$t('colorCustom')}
+                    class="h-8 px-2 flex items-center gap-1.5 rounded border text-xs transition-colors {nonBgColorMode === 'custom' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+                  >
+                    <span class="text-gray-700 dark:text-gray-200">{$t('colorCustom')}</span>
+                    <span class="w-5 h-5 rounded border border-gray-300" style={`background-color: ${normalizeHexColor(nonBgCustomHex)}`}></span>
+                  </button>
+                </div>
+                {#if nonBgColorMode === 'custom'}
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={normalizeHexColor(nonBgCustomHex)}
+                      on:input={(e) => nonBgCustomHex = (e.currentTarget as HTMLInputElement).value}
+                      class="w-10 h-8 rounded border border-gray-300 dark:border-gray-600 bg-transparent p-0"
+                    >
+                    <input
+                      type="text"
+                      bind:value={nonBgCustomHex}
+                      on:blur={() => nonBgCustomHex = normalizeHexColor(nonBgCustomHex)}
+                      placeholder="#FFFFFF"
+                      class="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1.5 text-xs font-mono text-gray-900 dark:text-white"
+                    >
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
             <div class="bg-gray-50 dark:bg-gray-900/50 p-3 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-2 transition-colors">
               <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{$t('resolutionInfo')}</span>
               <div class="flex flex-col gap-1">
@@ -569,6 +676,7 @@
           {bgRemovalEnabled}
           {keyColor}
           {tolerance}
+          nonBgBackgroundHex={nonBgBackgroundHex}
           {concurrency}
           {showTileLines}
           {isAdjustingGrid}

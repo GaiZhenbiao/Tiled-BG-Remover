@@ -15,6 +15,7 @@
   export let aiOutputRes: number;
   export let bgRemovalEnabled: boolean;
   export let keyColor: string;
+  export let nonBgBackgroundHex: string = '#FFFFFF';
   export let tolerance: number = 10;
   export let concurrency: number = 2;
   export let resultSrc: string = '';
@@ -179,10 +180,29 @@
     });
   }
 
+  function normalizeHexColor(value: string): string {
+    const raw = (value || '').trim();
+    const match = raw.match(/^#?([0-9a-fA-F]{6})$/);
+    if (match) {
+      return `#${match[1].toUpperCase()}`;
+    }
+    return '#FFFFFF';
+  }
+
+  function getNonBgColorLabel(hex: string): string {
+    if (hex === '#FFFFFF') return 'pure white';
+    if (hex === '#000000') return 'pure black';
+    if (hex === '#00FF00') return 'pure green';
+    if (hex === '#0000FF') return 'pure blue';
+    return 'custom color';
+  }
+
   function getKeyColorBackgroundInstruction(color: string): string {
     const c = color.toLowerCase();
     if (!bgRemovalEnabled) {
-      return 'Remove background to solid pure white (#FFFFFF). No shadows or gradients.';
+      const hex = normalizeHexColor(nonBgBackgroundHex);
+      const label = getNonBgColorLabel(hex);
+      return `Set background to solid ${label} (${hex}). No shadows or gradients.`;
     }
     if (c === 'white') {
       return 'Remove background to solid pure white (#FFFFFF). No shadows or gradients.';
@@ -219,7 +239,7 @@
       background_instruction: getKeyColorBackgroundInstruction(keyColor),
       tile_position_instruction: getTilePositionInstruction(tile, useFullImageReference),
       reference_instruction: getReferencePromptInstruction(useFullImageReference),
-      key_color: bgRemovalEnabled ? keyColor : 'white',
+      key_color: bgRemovalEnabled ? keyColor : normalizeHexColor(nonBgBackgroundHex),
       tile_row: String(tile.r + 1),
       tile_col: String(tile.c + 1),
       tile_rows: String(rows),
