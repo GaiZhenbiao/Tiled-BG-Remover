@@ -458,6 +458,35 @@
     container.scrollTop = panStartScrollTop - dy;
   }
 
+  function handleMouseDown(event: MouseEvent) {
+    if (!container) return;
+    // Fallback for WebView environments where middle-button pointer events are inconsistent.
+    if (event.button !== 1) return;
+
+    container.focus();
+    isPanning = true;
+    activePointerId = null;
+    panStartX = event.clientX;
+    panStartY = event.clientY;
+    panStartScrollLeft = container.scrollLeft;
+    panStartScrollTop = container.scrollTop;
+    event.preventDefault();
+  }
+
+  function handleMouseMove(event: MouseEvent) {
+    if (!isPanning || activePointerId !== null) return;
+
+    const dx = event.clientX - panStartX;
+    const dy = event.clientY - panStartY;
+    container.scrollLeft = panStartScrollLeft - dx;
+    container.scrollTop = panStartScrollTop - dy;
+  }
+
+  function stopMousePanning() {
+    if (!isPanning || activePointerId !== null) return;
+    isPanning = false;
+  }
+
   function stopPanning(event?: PointerEvent) {
     if (!isPanning) return;
     if (event && activePointerId !== event.pointerId) return;
@@ -779,6 +808,11 @@
   on:pointermove={handlePointerMove}
   on:pointerup={stopPanning}
   on:pointercancel={stopPanning}
+  on:mousedown={handleMouseDown}
+  on:mousemove={handleMouseMove}
+  on:mouseup={stopMousePanning}
+  on:mouseleave={stopMousePanning}
+  on:auxclick|preventDefault
   on:keydown={handleKeyDown}
   on:keyup={handleKeyUp}
   on:blur={handleCanvasBlur}
