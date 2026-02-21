@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose, Engine as _};
 use exif::{In, Tag};
+use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType as PngFilterType, PngEncoder};
 use image::imageops::{crop_imm, FilterType as ResizeFilterType};
 use image::{ColorType, DynamicImage, ImageEncoder, Rgba, RgbaImage};
@@ -48,6 +49,66 @@ fn save_png_fast(path: &Path, image: &RgbaImage) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ImageFileFormat {
+    Png,
+    Jpeg,
+}
+
+fn image_format_from_path(path: &Path) -> ImageFileFormat {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => ImageFileFormat::Jpeg,
+        _ => ImageFileFormat::Png,
+    }
+}
+
+fn file_extension(format: ImageFileFormat) -> &'static str {
+    match format {
+        ImageFileFormat::Png => "png",
+        ImageFileFormat::Jpeg => "jpg",
+    }
+}
+
+fn flatten_rgba_to_rgb_white(image: &RgbaImage) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity((image.width() * image.height() * 3) as usize);
+    for px in image.pixels() {
+        let alpha = px[3] as u16;
+        let inv_alpha = 255u16.saturating_sub(alpha);
+        let r = ((px[0] as u16 * alpha + 255u16 * inv_alpha + 127) / 255) as u8;
+        let g = ((px[1] as u16 * alpha + 255u16 * inv_alpha + 127) / 255) as u8;
+        let b = ((px[2] as u16 * alpha + 255u16 * inv_alpha + 127) / 255) as u8;
+        rgb.extend_from_slice(&[r, g, b]);
+    }
+    rgb
+}
+
+fn save_jpeg_fast(path: &Path, image: &RgbaImage, quality: u8) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let writer = BufWriter::new(file);
+    let mut encoder = JpegEncoder::new_with_quality(writer, quality);
+    let rgb = flatten_rgba_to_rgb_white(image);
+    encoder
+        .encode(&rgb, image.width(), image.height(), ColorType::Rgb8)
+        .map_err(|e| e.to_string())
+}
+
+fn save_image_fast(path: &Path, image: &RgbaImage, format: ImageFileFormat) -> Result<(), String> {
+    match format {
+        ImageFileFormat::Png => save_png_fast(path, image),
+        ImageFileFormat::Jpeg => save_jpeg_fast(path, image, 90),
+    }
+}
+
+fn save_image_fast_auto(path: &Path, image: &RgbaImage) -> Result<(), String> {
+    save_image_fast(path, image, image_format_from_path(path))
+}
+
 fn encode_png_data_url_fast(image: &RgbaImage) -> Result<String, String> {
     let mut buffer = Cursor::new(Vec::new());
     let encoder =
@@ -63,6 +124,17 @@ fn encode_png_data_url_fast(image: &RgbaImage) -> Result<String, String> {
 
     let b64 = general_purpose::STANDARD.encode(buffer.get_ref());
     Ok(format!("data:image/png;base64,{}", b64))
+}
+
+fn encode_jpeg_data_url_fast(image: &RgbaImage, quality: u8) -> Result<String, String> {
+    let mut buffer = Cursor::new(Vec::new());
+    let mut encoder = JpegEncoder::new_with_quality(&mut buffer, quality);
+    let rgb = flatten_rgba_to_rgb_white(image);
+    encoder
+        .encode(&rgb, image.width(), image.height(), ColorType::Rgb8)
+        .map_err(|e| e.to_string())?;
+    let b64 = general_purpose::STANDARD.encode(buffer.get_ref());
+    Ok(format!("data:image/jpeg;base64,{}", b64))
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -127,7 +199,7 @@ pub fn save_resized_tile(path: &str, data: &[u8], width: u32, height: u32) -> Re
     let resized = img
         .resize_exact(width, height, ResizeFilterType::Lanczos3)
         .to_rgba8();
-    save_png_fast(Path::new(path), &resized)
+    save_image_fast_auto(Path::new(path), &resized)
 }
 
 pub fn split_image(
@@ -135,6 +207,7 @@ pub fn split_image(
     rows: u32,
     cols: u32,
     overlap_ratio: f64,
+    prefer_jpeg: bool,
     output_dir: &Path,
 ) -> Result<(Vec<TileInfo>, u32, u32, String), String> {
     if rows == 0 || cols == 0 {
@@ -143,10 +216,16 @@ pub fn split_image(
 
     let img_rgba = open_image_with_orientation(input_path)?.to_rgba8();
     let (w, h) = img_rgba.dimensions();
+    let image_format = if prefer_jpeg {
+        ImageFileFormat::Jpeg
+    } else {
+        ImageFileFormat::Png
+    };
+    let ext = file_extension(image_format);
 
     // Save a copy of the original to the output_dir to ensure it survives temp dir replacement.
-    let original_copy_path = output_dir.join("original_source.png");
-    save_png_fast(&original_copy_path, &img_rgba)?;
+    let original_copy_path = output_dir.join(format!("original_source.{}", ext));
+    save_image_fast(&original_copy_path, &img_rgba, image_format)?;
     let new_input_path = original_copy_path.to_string_lossy().to_string();
 
     let denom_w = cols as f64 - (cols as f64 - 1.0) * overlap_ratio;
@@ -184,11 +263,11 @@ pub fn split_image(
         .map(|(r, c, x, y, actual_w, actual_h)| {
             let tile = crop_imm(&img_rgba, x, y, actual_w, actual_h).to_image();
 
-            let orig_file_name = format!("orig_tile_{}_{}.png", r, c);
+            let orig_file_name = format!("orig_tile_{}_{}.{}", r, c, ext);
             let orig_file_path = output_dir.join(&orig_file_name);
-            save_png_fast(&orig_file_path, &tile)?;
+            save_image_fast(&orig_file_path, &tile, image_format)?;
 
-            let proc_file_name = format!("tile_{}_{}.png", r, c);
+            let proc_file_name = format!("tile_{}_{}.{}", r, c, ext);
             let proc_file_path = output_dir.join(&proc_file_name);
 
             Ok(TileInfo {
@@ -298,8 +377,15 @@ pub fn merge_tiles(
             let mut final_path = job.path.clone();
             if !Path::new(&job.path).exists() {
                 let dir = Path::new(&job.path).parent().ok_or("Invalid tile path")?;
-                let fallback = dir.join(format!("orig_tile_{}_{}.png", job.r, job.c));
-                if fallback.exists() {
+                let mut fallback_path = None;
+                for ext in ["png", "jpg", "jpeg"] {
+                    let candidate = dir.join(format!("orig_tile_{}_{}.{}", job.r, job.c, ext));
+                    if candidate.exists() {
+                        fallback_path = Some(candidate);
+                        break;
+                    }
+                }
+                if let Some(fallback) = fallback_path {
                     final_path = fallback.to_string_lossy().to_string();
                 } else {
                     return Err(format!(
@@ -482,7 +568,11 @@ pub fn merge_tiles(
             });
     }
 
-    encode_png_data_url_fast(&final_img)
+    if remove_bg {
+        encode_png_data_url_fast(&final_img)
+    } else {
+        encode_jpeg_data_url_fast(&final_img, 90)
+    }
 }
 
 #[cfg(test)]

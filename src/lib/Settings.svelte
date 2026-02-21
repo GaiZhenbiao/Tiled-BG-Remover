@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { t, locale } from '../lib/i18n';
   
@@ -41,6 +41,9 @@ Return only the generated tile image.`;
   let operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
   let verboseLogging = localStorage.getItem('verbose_logging') === 'true';
   let useFullImageReference = localStorage.getItem('use_full_image_reference') === 'true';
+  let bgRemovalSetting = localStorage.getItem('bg_removal_enabled') === 'true';
+  let keyColorSetting = localStorage.getItem('key_color') || 'green';
+  let toleranceSetting = parseInt(localStorage.getItem('key_tolerance') || '10');
   let showApiKey = false;
 
   function restorePromptTemplateWithReference() {
@@ -64,12 +67,21 @@ Return only the generated tile image.`;
     localStorage.setItem('gemini_operation_mode', operationMode);
     localStorage.setItem('verbose_logging', verboseLogging.toString());
     localStorage.setItem('use_full_image_reference', useFullImageReference.toString());
+    localStorage.setItem('bg_removal_enabled', bgRemovalSetting.toString());
+    localStorage.setItem('key_color', keyColorSetting);
+    localStorage.setItem('key_tolerance', String(toleranceSetting));
     localStorage.setItem('concurrency', concurrency.toString());
     dispatch('close');
   }
 
   function clearApiKey() {
     apiKey = '';
+  }
+
+  function setToleranceSetting(e: Event) {
+    const target = e.target as HTMLInputElement;
+    const v = parseInt(target.value);
+    toleranceSetting = Number.isNaN(v) ? 10 : Math.min(100, Math.max(0, v));
   }
 </script>
 
@@ -115,6 +127,39 @@ Return only the generated tile image.`;
         <span class="text-sm text-gray-700 dark:text-gray-300">{$t('settings.fullImageReference')}</span>
         <input type="checkbox" bind:checked={useFullImageReference} class="accent-blue-600">
       </label>
+
+      <label class="flex items-center justify-between gap-3 rounded border border-gray-200 dark:border-gray-700 p-2">
+        <span class="text-sm text-gray-700 dark:text-gray-300">{$t('bgRemoval')}</span>
+        <input type="checkbox" bind:checked={bgRemovalSetting} class="accent-blue-600">
+      </label>
+
+      {#if bgRemovalSetting}
+        <div class="rounded border border-gray-200 dark:border-gray-700 p-3 flex flex-col gap-2">
+          <span class="text-sm text-gray-700 dark:text-gray-300">{$t('keyColor')}</span>
+          <div class="flex gap-2">
+            {#each ['green', 'red', 'blue', 'black', 'white'] as color}
+              <button
+                type="button"
+                on:click={() => (keyColorSetting = color)}
+                class="w-6 h-6 rounded-full border border-gray-300 dark:border-gray-600 {keyColorSetting === color ? 'ring-2 ring-blue-500 dark:ring-blue-400' : ''}"
+                style="background-color: {color === 'white' ? '#fff' : color === 'black' ? '#000' : color}"
+                title={color}
+              ></button>
+            {/each}
+          </div>
+          <div class="flex justify-between items-center mt-1">
+            <span class="text-xs text-gray-500 dark:text-gray-400">{$t('tolerance')} ({toleranceSetting})</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={toleranceSetting}
+              on:input={setToleranceSetting}
+              class="w-36 accent-blue-600"
+            >
+          </div>
+        </div>
+      {/if}
       
       <div>
         <label for="api-key" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.apiKey')}</label>

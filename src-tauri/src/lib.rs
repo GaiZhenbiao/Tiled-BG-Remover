@@ -1,8 +1,10 @@
 use base64::{engine::general_purpose, Engine as _};
-use image::RgbaImage;
+use image::codecs::jpeg::JpegEncoder;
+use image::codecs::png::{CompressionType, FilterType as PngFilterType, PngEncoder};
+use image::{ColorType, DynamicImage, ImageEncoder, RgbaImage};
 use psd_rs::{Document, Layer};
 use std::fs;
-use std::io::Cursor;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tempfile::TempDir;
@@ -43,7 +45,7 @@ fn load_image(path: String) -> Result<String, String> {
 
 #[tauri::command]
 fn save_image(path: String, base64_data: String) -> Result<(), String> {
-    let data_str = base64_data.split(",").last().unwrap_or(&base64_data);
+    let data_str = base64_data.split(',').last().unwrap_or(&base64_data);
     let data = general_purpose::STANDARD
         .decode(data_str)
         .map_err(|e| e.to_string())?;
@@ -58,7 +60,7 @@ fn save_image_resized(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    let data_str = base64_data.split(",").last().unwrap_or(&base64_data);
+    let data_str = base64_data.split(',').last().unwrap_or(&base64_data);
     let data = general_purpose::STANDARD
         .decode(data_str)
         .map_err(|e| e.to_string())?;
@@ -72,6 +74,7 @@ async fn split_img(
     rows: u32,
     cols: u32,
     overlap_ratio: f64,
+    prefer_jpeg: bool,
 ) -> Result<SplitResponse, String> {
     let path_clone = path.clone();
 
@@ -80,8 +83,14 @@ async fn split_img(
         let td = TempDir::new().map_err(|e| e.to_string())?;
         let td_path = td.path().to_path_buf();
 
-        let (tiles, w, h, new_path) =
-            split_image(&path_clone, rows, cols, overlap_ratio, &td_path)?;
+        let (tiles, w, h, new_path) = split_image(
+            &path_clone,
+            rows,
+            cols,
+            overlap_ratio,
+            prefer_jpeg,
+            &td_path,
+        )?;
 
         Ok::<_, String>((td, tiles, w, h, td_path, new_path))
     })
@@ -127,14 +136,40 @@ struct ExportTile {
 
 #[derive(serde::Serialize)]
 struct SaveBundleResponse {
+    export_dir: String,
     merged_path: String,
     psd_path: String,
+    tiles_dir: String,
     tile_count: usize,
+    image_format: String,
+    psd_logs: Vec<String>,
 }
 
 struct LayerExport {
     tile: ExportTile,
     image: RgbaImage,
+}
+
+#[derive(Clone, Copy)]
+enum ExportImageFormat {
+    Png,
+    Jpeg,
+}
+
+impl ExportImageFormat {
+    fn ext(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpg",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpeg",
+        }
+    }
 }
 
 fn decode_data_url(data: &str) -> Result<Vec<u8>, String> {
@@ -144,25 +179,61 @@ fn decode_data_url(data: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())
 }
 
-fn ensure_png_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
-    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
-    if data.starts_with(PNG_SIGNATURE) {
-        return Ok(data.to_vec());
+fn flatten_rgba_to_rgb_white(image: &RgbaImage) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity((image.width() * image.height() * 3) as usize);
+    for px in image.pixels() {
+        let alpha = px[3] as u16;
+        let inv_alpha = 255u16.saturating_sub(alpha);
+        let r = ((px[0] as u16 * alpha + 255u16 * inv_alpha + 127) / 255) as u8;
+        let g = ((px[1] as u16 * alpha + 255u16 * inv_alpha + 127) / 255) as u8;
+        let b = ((px[2] as u16 * alpha + 255u16 * inv_alpha + 127) / 255) as u8;
+        rgb.extend_from_slice(&[r, g, b]);
     }
-
-    let img = image::load_from_memory(data).map_err(|e| e.to_string())?;
-    let mut cursor = Cursor::new(Vec::new());
-    img.write_to(&mut cursor, image::ImageOutputFormat::Png)
-        .map_err(|e| e.to_string())?;
-    Ok(cursor.into_inner())
+    rgb
 }
 
-fn resolve_tile_source(tile: &ExportTile) -> Result<(PathBuf, bool), String> {
+fn save_png_fast(path: &Path, image: &RgbaImage) -> Result<(), String> {
+    let file = fs::File::create(path).map_err(|e| e.to_string())?;
+    let writer = BufWriter::new(file);
+    let encoder =
+        PngEncoder::new_with_quality(writer, CompressionType::Fast, PngFilterType::NoFilter);
+    encoder
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            ColorType::Rgba8,
+        )
+        .map_err(|e| e.to_string())
+}
+
+fn save_jpeg_fast(path: &Path, image: &RgbaImage, quality: u8) -> Result<(), String> {
+    let file = fs::File::create(path).map_err(|e| e.to_string())?;
+    let writer = BufWriter::new(file);
+    let mut encoder = JpegEncoder::new_with_quality(writer, quality);
+    let rgb = flatten_rgba_to_rgb_white(image);
+    encoder
+        .encode(&rgb, image.width(), image.height(), ColorType::Rgb8)
+        .map_err(|e| e.to_string())
+}
+
+fn write_image_with_format(
+    path: &Path,
+    image: &RgbaImage,
+    format: ExportImageFormat,
+) -> Result<(), String> {
+    match format {
+        ExportImageFormat::Png => save_png_fast(path, image),
+        ExportImageFormat::Jpeg => save_jpeg_fast(path, image, 90),
+    }
+}
+
+fn resolve_tile_source(tile: &ExportTile) -> Result<PathBuf, String> {
     let processed = tile.path.trim();
     if !processed.is_empty() {
         let processed_path = PathBuf::from(processed);
         if processed_path.is_file() {
-            return Ok((processed_path, false));
+            return Ok(processed_path);
         }
     }
 
@@ -170,7 +241,7 @@ fn resolve_tile_source(tile: &ExportTile) -> Result<(PathBuf, bool), String> {
     if !original.is_empty() {
         let original_path = PathBuf::from(original);
         if original_path.is_file() {
-            return Ok((original_path, true));
+            return Ok(original_path);
         }
     }
 
@@ -196,9 +267,11 @@ fn resolve_input_source_path(input_path: Option<&str>, tiles: &[ExportTile]) -> 
 
         let original_path = PathBuf::from(original);
         if let Some(parent) = original_path.parent() {
-            let candidate = parent.join("original_source.png");
-            if candidate.is_file() {
-                return Some(candidate);
+            for ext in ["png", "jpg", "jpeg"] {
+                let candidate = parent.join(format!("original_source.{}", ext));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
             }
         }
     }
@@ -206,12 +279,55 @@ fn resolve_input_source_path(input_path: Option<&str>, tiles: &[ExportTile]) -> 
     None
 }
 
+fn sanitize_path_component(input: &str) -> String {
+    let mut out: String = input
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+
+    out = out.trim().trim_matches('.').to_string();
+    if out.is_empty() {
+        "image".to_string()
+    } else {
+        out
+    }
+}
+
+fn append_psd_log(psd_logs: &mut Vec<String>, verbose_logging: bool, message: &str) {
+    if verbose_logging {
+        psd_logs.push(format!("[PSD] {}", message));
+    }
+}
+
 fn write_psd(
     psd_path: &Path,
     source_image: &RgbaImage,
     merged_image: &RgbaImage,
     layers: &[LayerExport],
+    psd_logs: &mut Vec<String>,
+    verbose_logging: bool,
 ) -> Result<(), String> {
+    append_psd_log(
+        psd_logs,
+        verbose_logging,
+        &format!(
+            "start: os={}, target={}, source={}x{}, merged={}x{}, tiles={}",
+            std::env::consts::OS,
+            psd_path.to_string_lossy(),
+            source_image.width(),
+            source_image.height(),
+            merged_image.width(),
+            merged_image.height(),
+            layers.len()
+        ),
+    );
+
     let mut document = Document::new();
 
     let mut input_layer = Layer::new("Input Source");
@@ -225,7 +341,6 @@ fn write_psd(
     input_layer.set_offset(0, 0);
     document.push(input_layer).map_err(|e| e.to_string())?;
 
-    // Keep a full-size base layer so PSD canvas size always matches merged output dimensions.
     let mut merged_layer = Layer::new("Merged Result");
     merged_layer
         .set_image(
@@ -250,10 +365,61 @@ fn write_psd(
         document.push(psd_layer).map_err(|e| e.to_string())?;
     }
 
-    document
-        .save(psd_path.to_string_lossy().as_ref())
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    let target = psd_path.to_string_lossy().to_string();
+    match document.save(&target) {
+        Ok(_) => {
+            append_psd_log(psd_logs, verbose_logging, "save success: direct write");
+            Ok(())
+        }
+        Err(primary_err) => {
+            append_psd_log(
+                psd_logs,
+                verbose_logging,
+                &format!("direct save failed: {}", primary_err),
+            );
+
+            if cfg!(windows) {
+                let temp_path = std::env::temp_dir().join("tiled-bg-remover-psd-export.psd");
+                let temp_target = temp_path.to_string_lossy().to_string();
+                append_psd_log(
+                    psd_logs,
+                    verbose_logging,
+                    &format!("retry via temp file: {}", temp_target),
+                );
+
+                match document.save(&temp_target) {
+                    Ok(_) => {
+                        fs::copy(&temp_path, psd_path).map_err(|e| {
+                            format!(
+                                "PSD temp save succeeded but copy to destination failed: {}",
+                                e
+                            )
+                        })?;
+                        let _ = fs::remove_file(&temp_path);
+                        append_psd_log(
+                            psd_logs,
+                            verbose_logging,
+                            "save success: temp-file fallback",
+                        );
+                        Ok(())
+                    }
+                    Err(temp_err) => {
+                        append_psd_log(
+                            psd_logs,
+                            verbose_logging,
+                            &format!("temp save failed: {}", temp_err),
+                        );
+                        Err(format!(
+                            "PSD save failed. direct='{}', temp='{}'",
+                            primary_err, temp_err
+                        ))
+                    }
+                }
+            } else {
+                Err(format!("PSD save failed: {}", primary_err))
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -266,7 +432,6 @@ async fn merge_img(
     remove_bg: bool,
     tolerance: u8,
 ) -> Result<String, String> {
-    // Offload merging to blocking thread
     tauri::async_runtime::spawn_blocking(move || {
         let tile_tuples: Vec<(u32, u32, String)> =
             tiles.into_iter().map(|t| (t.r, t.c, t.path)).collect();
@@ -298,7 +463,6 @@ fn crop_img(
         .lock()
         .map_err(|_| "Failed to lock state".to_string())?;
 
-    // Ensure temp dir exists
     if state_temp.is_none() {
         *state_temp = Some(TempDir::new().map_err(|e| e.to_string())?);
     }
@@ -309,7 +473,7 @@ fn crop_img(
 
 #[tauri::command]
 fn save_merged_image(path: String, base64_data: String) -> Result<(), String> {
-    let data_str = base64_data.split(",").last().unwrap_or(&base64_data);
+    let data_str = base64_data.split(',').last().unwrap_or(&base64_data);
     let data = general_purpose::STANDARD
         .decode(data_str)
         .map_err(|e| e.to_string())?;
@@ -319,36 +483,64 @@ fn save_merged_image(path: String, base64_data: String) -> Result<(), String> {
 
 #[tauri::command]
 fn save_export_bundle(
-    path: String,
+    output_dir: String,
     merged_base64: String,
     tiles: Vec<ExportTile>,
     source_path: Option<String>,
+    input_name: Option<String>,
+    remove_bg: bool,
+    localized_suffix: Option<String>,
+    verbose_logging: bool,
 ) -> Result<SaveBundleResponse, String> {
     if tiles.is_empty() {
         return Err("No tile metadata available for export.".to_string());
     }
 
-    let output_path = PathBuf::from(&path);
-    let parent = output_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
+    let image_format = if remove_bg {
+        ExportImageFormat::Png
+    } else {
+        ExportImageFormat::Jpeg
+    };
 
-    let stem = output_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("upscaled_image");
-    let psd_path = parent.join(format!("{}.psd", stem));
+    let export_parent = PathBuf::from(output_dir);
+    fs::create_dir_all(&export_parent).map_err(|e| e.to_string())?;
+
+    let folder_name = sanitize_path_component(input_name.as_deref().unwrap_or("image"));
+    let export_dir = export_parent.join(&folder_name);
+    let tiles_dir = export_dir.join("tiles");
+    fs::create_dir_all(&tiles_dir).map_err(|e| e.to_string())?;
+
+    let suffix = sanitize_path_component(
+        localized_suffix
+            .as_deref()
+            .unwrap_or("BGRemoved")
+            .trim(),
+    );
+    let stem = if suffix.is_empty() {
+        folder_name.clone()
+    } else {
+        format!("{}_{}", folder_name, suffix)
+    };
+
+    let merged_path = export_dir.join(format!("{}.{}", stem, image_format.ext()));
+    let psd_path = export_dir.join(format!("{}.psd", stem));
+    let mut psd_logs: Vec<String> = Vec::new();
+
+    append_psd_log(
+        &mut psd_logs,
+        verbose_logging,
+        &format!(
+            "bundle start: export_dir={}, format={}",
+            export_dir.to_string_lossy(),
+            image_format.name()
+        ),
+    );
 
     let merged_raw = decode_data_url(&merged_base64)?;
-    let merged_png = ensure_png_bytes(&merged_raw)?;
-    fs::write(&output_path, &merged_png).map_err(|e| e.to_string())?;
-
-    let merged_img = image::load_from_memory(&merged_png)
-        .map_err(|e| e.to_string())?
+    let merged_img = image::load_from_memory(&merged_raw)
+        .map_err(|e| format!("Failed to decode merged result: {}", e))?
         .to_rgba8();
+    write_image_with_format(&merged_path, &merged_img, image_format)?;
 
     let mut sorted_tiles = tiles;
     sorted_tiles.sort_unstable_by_key(|t| (t.r, t.c));
@@ -356,13 +548,12 @@ fn save_export_bundle(
     let source_image_path = resolve_input_source_path(source_path.as_deref(), &sorted_tiles)
         .ok_or_else(|| "Failed to resolve input source image for PSD export.".to_string())?;
     let source_bytes = fs::read(&source_image_path).map_err(|e| e.to_string())?;
-    let source_png = ensure_png_bytes(&source_bytes)?;
-    let mut source_img = image::load_from_memory(&source_png)
+    let mut source_img = image::load_from_memory(&source_bytes)
         .map_err(|e| e.to_string())?
         .to_rgba8();
 
     if source_img.width() != merged_img.width() || source_img.height() != merged_img.height() {
-        source_img = image::DynamicImage::ImageRgba8(source_img)
+        source_img = DynamicImage::ImageRgba8(source_img)
             .resize_exact(
                 merged_img.width(),
                 merged_img.height(),
@@ -374,18 +565,21 @@ fn save_export_bundle(
     let mut layers: Vec<LayerExport> = Vec::with_capacity(sorted_tiles.len());
 
     for tile in sorted_tiles {
-        let (source_path, _) = resolve_tile_source(&tile)?;
-        let source_bytes = fs::read(&source_path).map_err(|e| e.to_string())?;
-        let source_png = ensure_png_bytes(&source_bytes)?;
-        let mut layer_img = image::load_from_memory(&source_png)
+        let tile_source_path = resolve_tile_source(&tile)?;
+        let source_bytes = fs::read(&tile_source_path).map_err(|e| e.to_string())?;
+        let mut layer_img = image::load_from_memory(&source_bytes)
             .map_err(|e| e.to_string())?
             .to_rgba8();
 
         if layer_img.width() != tile.width || layer_img.height() != tile.height {
-            layer_img = image::DynamicImage::ImageRgba8(layer_img)
+            layer_img = DynamicImage::ImageRgba8(layer_img)
                 .resize_exact(tile.width, tile.height, image::imageops::FilterType::Lanczos3)
                 .to_rgba8();
         }
+
+        let tile_export_path =
+            tiles_dir.join(format!("tile_r{}_c{}.{}", tile.r + 1, tile.c + 1, image_format.ext()));
+        write_image_with_format(&tile_export_path, &layer_img, image_format)?;
 
         layers.push(LayerExport {
             tile,
@@ -393,12 +587,23 @@ fn save_export_bundle(
         });
     }
 
-    write_psd(&psd_path, &source_img, &merged_img, &layers)?;
+    write_psd(
+        &psd_path,
+        &source_img,
+        &merged_img,
+        &layers,
+        &mut psd_logs,
+        verbose_logging,
+    )?;
 
     Ok(SaveBundleResponse {
-        merged_path: output_path.to_string_lossy().to_string(),
+        export_dir: export_dir.to_string_lossy().to_string(),
+        merged_path: merged_path.to_string_lossy().to_string(),
         psd_path: psd_path.to_string_lossy().to_string(),
+        tiles_dir: tiles_dir.to_string_lossy().to_string(),
         tile_count: layers.len(),
+        image_format: image_format.name().to_string(),
+        psd_logs,
     })
 }
 

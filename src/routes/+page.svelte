@@ -5,7 +5,7 @@
   import Settings from '../lib/Settings.svelte';
   import CropModal from '../lib/CropModal.svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { save } from '@tauri-apps/plugin-dialog';
+  import { open } from '@tauri-apps/plugin-dialog';
   import { t } from '../lib/i18n';
   import { detectMainSubject } from '../lib/api';
 
@@ -58,6 +58,13 @@
       clearTimeout(gridAdjustTimer);
     }
   });
+
+  function handleSettingsClose() {
+    showSettings = false;
+    bgRemovalEnabled = localStorage.getItem('bg_removal_enabled') === 'true';
+    keyColor = localStorage.getItem('key_color') || 'green';
+    tolerance = parseInt(localStorage.getItem('key_tolerance') || '10');
+  }
 
   function applyTheme() {
     if (theme === 'dark') {
@@ -203,49 +210,55 @@
 
   async function saveResult() {
     if (!resultSrc) return;
-    
-    const localizedSuffix = String($t('bgRemovedSuffix'));
-    let defaultPath = originalFilename
-      ? `${originalFilename}_${localizedSuffix}.png`
-      : `upscaled_${localizedSuffix}.png`;
 
-    const path = await save({
-      filters: [{ name: 'Image', extensions: ['png'] }],
-      defaultPath: defaultPath
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      defaultPath: originalFilename || undefined
     });
-    if (path) {
+    const exportParentDir = Array.isArray(selected) ? selected[0] : selected;
+    if (typeof exportParentDir === 'string' && exportParentDir.length > 0) {
+      const localizedSuffix = String($t('bgRemovedSuffix'));
+
       if (exportTiles.length > 0) {
+        const verboseLogging = localStorage.getItem('verbose_logging') === 'true';
         const exportRes: any = await invoke('save_export_bundle', {
-          path,
+          outputDir: exportParentDir,
           mergedBase64: resultSrc,
           tiles: exportTiles,
-          sourcePath: imagePath
+          sourcePath: imagePath,
+          inputName: originalFilename || 'image',
+          removeBg: bgRemovalEnabled,
+          localizedSuffix,
+          verboseLogging
         });
+        if (verboseLogging && Array.isArray(exportRes?.psd_logs) && exportRes.psd_logs.length > 0) {
+          const extraLogs = exportRes.psd_logs.map((message: string) => ({
+            type: 'info',
+            message,
+            time: new Date().toLocaleTimeString()
+          }));
+          logs = [...extraLogs.reverse(), ...logs];
+        }
         logs = [{
           type: 'success',
-          message: `Saved PNG + layered PSD (${exportRes.tile_count} layers): ${exportRes.psd_path}`,
+          message: `Saved export bundle (${exportRes.tile_count} tiles): ${exportRes.export_dir}`,
           time: new Date().toLocaleTimeString()
         }, ...logs];
       } else {
-        await invoke('save_merged_image', { path, base64Data: resultSrc });
-        logs = [{ type: 'success', message: `Image saved to ${path}`, time: new Date().toLocaleTimeString() }, ...logs];
+        const ext = bgRemovalEnabled ? 'png' : 'jpg';
+        const stem = originalFilename
+          ? `${originalFilename}_${localizedSuffix}`
+          : `upscaled_${localizedSuffix}`;
+        const mergedPath = `${exportParentDir}/${stem}.${ext}`;
+        await invoke('save_merged_image', { path: mergedPath, base64Data: resultSrc });
+        logs = [{
+          type: 'success',
+          message: `Image saved to ${mergedPath}`,
+          time: new Date().toLocaleTimeString()
+        }, ...logs];
       }
     }
-  }
-
-  function toggleBGRemoval() {
-    bgRemovalEnabled = !bgRemovalEnabled;
-    localStorage.setItem('bg_removal_enabled', bgRemovalEnabled.toString());
-  }
-
-  function setKeyColor(color: string) {
-    keyColor = color;
-    localStorage.setItem('key_color', color);
-  }
-
-  function setTolerance(e: any) {
-    tolerance = parseInt(e.target.value);
-    localStorage.setItem('key_tolerance', tolerance.toString());
   }
 
   function clampInt(value: number, min: number, max: number): number {
@@ -323,15 +336,16 @@
       <span class="text-blue-600 dark:text-blue-400">{$t('appTitle')}</span>
     </div>
     <div class="flex items-center gap-2">
-      <!-- BG Removal Toggle -->
-      <div class="flex items-center bg-gray-200 dark:bg-gray-700 rounded-full px-2 py-1 mr-2 border border-gray-300 dark:border-gray-600 transition-colors">
-        <label class="flex items-center gap-2 cursor-pointer">
-          <span class="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase">{$t('bgRemoval')}</span>
-          <input type="checkbox" checked={bgRemovalEnabled} on:change={toggleBGRemoval} class="toggle toggle-sm accent-blue-500">
-        </label>
-      </div>
-
       {#if imagePath}
+        <button
+          on:click={() => showCropModal = true}
+          class="bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-white px-3 py-1 rounded text-sm flex items-center gap-2 border border-gray-300 dark:border-gray-600 transition-colors"
+          title={$t('cropImage')}
+          aria-label={$t('cropImage')}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"></path><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"></path></svg>
+        </button>
+
         <button on:click={clearInput} class="bg-red-600/80 hover:bg-red-600 text-white px-3 py-1 rounded text-sm flex items-center gap-2" title="Clear Input Image">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
         </button>
@@ -379,14 +393,6 @@
 
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-6">
         {#if activeTab === 'controls'}
-            <div class="flex flex-col gap-2">
-              <label for="tools-label" class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{$t('tools')}</label>
-              <button id="tools-label" on:click={() => showCropModal = true} class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white text-sm py-1.5 rounded flex items-center justify-center gap-2 border border-gray-200 dark:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors" disabled={!imagePath}>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"></path><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"></path></svg>
-                {$t('cropImage')}
-              </button>
-            </div>
-
             <div class="flex flex-col gap-2">
               <div class="flex items-center justify-between">
                 <label for="grid-rows" class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{$t('gridLayout')}</label>
@@ -458,31 +464,6 @@
                 {/each}
               </select>
             </div>
-
-            {#if bgRemovalEnabled}
-              <div class="flex flex-col gap-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{$t('keyColor')}</span>
-                </div>
-                <div class="flex gap-1">
-                    {#each ['green', 'red', 'blue', 'black', 'white'] as color}
-                      <button 
-                        on:click={() => setKeyColor(color)}
-                        class="w-5 h-5 rounded-full border border-gray-300 dark:border-gray-600 {keyColor === color ? 'ring-2 ring-blue-500 dark:ring-blue-400' : ''}"
-                        style="background-color: {color === 'white' ? '#fff' : color === 'black' ? '#000' : color}"
-                        title={color}
-                      ></button>
-                    {/each}
-                </div>
-                
-                <div class="flex flex-col gap-1 mt-2">
-                  <div class="flex justify-between items-center">
-                    <span class="text-xs text-gray-500 dark:text-gray-400">{$t('tolerance')} ({tolerance})</span>
-                    <input type="range" min="0" max="100" value={tolerance} on:input={setTolerance} class="w-32 accent-blue-500">
-                  </div>
-                </div>
-              </div>
-            {/if}
 
             <div class="bg-gray-50 dark:bg-gray-900/50 p-3 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-2 transition-colors">
               <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{$t('resolutionInfo')}</span>
@@ -614,7 +595,7 @@
   </div>
 
   {#if showSettings}
-    <Settings bind:concurrency bind:theme on:close={() => showSettings = false} />
+    <Settings bind:concurrency bind:theme on:close={handleSettingsClose} />
   {/if}
 
   {#if showCropModal}

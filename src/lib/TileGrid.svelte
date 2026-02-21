@@ -671,7 +671,9 @@
           path: src,
           rows,
           cols,
-          overlapRatio: overlap
+          overlapRatio: overlap,
+          // Always prefer JPEG during tiling/AI stages to avoid alpha-channel PNG issues.
+          preferJpeg: true
         });
         
         tempDir = splitRes.temp_dir;
