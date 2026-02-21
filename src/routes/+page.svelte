@@ -121,6 +121,7 @@
   function applyTheme() {
     const isDark = theme === 'dark' || (theme === 'auto' && systemPrefersDark);
     document.documentElement.classList.toggle('dark', isDark);
+    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
   }
 
   $: if (theme) {
