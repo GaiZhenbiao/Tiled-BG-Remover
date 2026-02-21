@@ -1,5 +1,5 @@
 <script>
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher } from 'svelte';
   import { t, locale } from '../lib/i18n';
   
   const dispatch = createEventDispatcher();
@@ -81,7 +81,7 @@ Return only the generated tile image.`;
     
     <div class="flex-1 overflow-y-auto pr-2 flex flex-col gap-4">
       <div>
-        <label for="language" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">Language</label>
+        <label for="language" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.language')}</label>
         <select id="language" bind:value={$locale} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors">
           <option value="en">English</option>
           <option value="zh">中文</option>
@@ -90,19 +90,19 @@ Return only the generated tile image.`;
       </div>
 
       <div>
-        <label for="theme" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">Appearance</label>
+        <label for="theme" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.appearance')}</label>
         <select id="theme" bind:value={theme} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors">
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
+          <option value="light">{$t('settings.themeLight')}</option>
+          <option value="dark">{$t('settings.themeDark')}</option>
         </select>
       </div>
       
       <div>
-        <label for="operation-mode" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">Operation Mode</label>
+        <label for="operation-mode" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.operationMode')}</label>
         <select id="operation-mode" bind:value={operationMode} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors">
-          <option value="default">Default (Image-to-Image)</option>
-          <option value="mock">Mock (Local Noise)</option>
-          <option value="test_t2i">Test (AI Text-to-Image)</option>
+          <option value="default">{$t('settings.operationModeDefault')}</option>
+          <option value="mock">{$t('settings.operationModeMock')}</option>
+          <option value="test_t2i">{$t('settings.operationModeTestT2i')}</option>
         </select>
       </div>
 
@@ -193,7 +193,7 @@ Return only the generated tile image.`;
         </div>
         <textarea id="system-prompt-no-ref" bind:value={promptTemplateWithoutReference} rows="7" class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors"></textarea>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-          Placeholders: <code>{'{subject}'}</code>, <code>{'{background_instruction}'}</code>,
+          {$t('settings.placeholdersLabel')}: <code>{'{subject}'}</code>, <code>{'{background_instruction}'}</code>,
           <code>{'{key_color}'}</code>, <code>{'{tile_row}'}</code>, <code>{'{tile_col}'}</code>,
           <code>{'{tile_rows}'}</code>, <code>{'{tile_cols}'}</code>, <code>{'{tile_width}'}</code>,
           <code>{'{tile_height}'}</code>, <code>{'{image_width}'}</code>, <code>{'{image_height}'}</code>.

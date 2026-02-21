@@ -1,6 +1,46 @@
 import { writable, derived } from 'svelte/store';
+import { browser } from '$app/environment';
 
-export const locale = writable('en');
+const SUPPORTED_LOCALES = ['en', 'zh', 'ja'] as const;
+type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+const LOCALE_STORAGE_KEY = 'app_locale';
+const FALLBACK_LOCALE: SupportedLocale = 'en';
+
+function normalizeLocale(input: string | null | undefined): SupportedLocale {
+  const value = (input || '').toLowerCase();
+  if (value.startsWith('zh')) return 'zh';
+  if (value.startsWith('ja')) return 'ja';
+  if (value.startsWith('en')) return 'en';
+  return FALLBACK_LOCALE;
+}
+
+function getInitialLocale(): SupportedLocale {
+  if (!browser) return FALLBACK_LOCALE;
+
+  const saved = localStorage.getItem(LOCALE_STORAGE_KEY);
+  if (saved) return normalizeLocale(saved);
+
+  const preferred = navigator.languages && navigator.languages.length > 0
+    ? navigator.languages
+    : [navigator.language];
+
+  for (const lang of preferred) {
+    const normalized = normalizeLocale(lang);
+    if (SUPPORTED_LOCALES.includes(normalized)) {
+      return normalized;
+    }
+  }
+
+  return FALLBACK_LOCALE;
+}
+
+export const locale = writable<SupportedLocale>(getInitialLocale());
+
+if (browser) {
+  locale.subscribe((value) => {
+    localStorage.setItem(LOCALE_STORAGE_KEY, value);
+  });
+}
 
 const translations = {
   en: {
@@ -50,6 +90,14 @@ const translations = {
     logs: "Logs",
     settings: {
       title: "Settings",
+      language: "Language",
+      appearance: "Appearance",
+      operationMode: "Operation Mode",
+      operationModeDefault: "Default (Image-to-Image)",
+      operationModeMock: "Mock (Local Noise)",
+      operationModeTestT2i: "Test (AI Text-to-Image)",
+      themeLight: "Light",
+      themeDark: "Dark",
       apiKey: "Google AI API Key",
       apiKeyHint: "Used for Google AI requests. Saved locally on this device.",
       apiUrl: "API Base URL",
@@ -63,6 +111,7 @@ const translations = {
       promptTemplate: "Prompt Template",
       promptTemplateWithReference: "Prompt Template (With Reference)",
       promptTemplateWithoutReference: "Prompt Template (No Reference)",
+      placeholdersLabel: "Placeholders",
       restoreDefault: "Restore default",
       cancel: "Cancel",
       save: "Save",
@@ -117,6 +166,14 @@ const translations = {
     logs: "日志",
     settings: {
       title: "设置",
+      language: "语言",
+      appearance: "外观",
+      operationMode: "运行模式",
+      operationModeDefault: "默认（图生图）",
+      operationModeMock: "模拟（本地噪声）",
+      operationModeTestT2i: "测试（AI 文生图）",
+      themeLight: "浅色",
+      themeDark: "深色",
       apiKey: "Google AI API 密钥",
       apiKeyHint: "用于 Google AI 请求。仅保存在当前设备本地。",
       apiUrl: "API 基础地址",
@@ -130,6 +187,7 @@ const translations = {
       promptTemplate: "提示词模板",
       promptTemplateWithReference: "提示词模板（有参考图）",
       promptTemplateWithoutReference: "提示词模板（无参考图）",
+      placeholdersLabel: "占位符",
       restoreDefault: "恢复默认",
       cancel: "取消",
       save: "保存",
@@ -184,6 +242,14 @@ const translations = {
     logs: "ログ",
     settings: {
       title: "設定",
+      language: "言語",
+      appearance: "外観",
+      operationMode: "動作モード",
+      operationModeDefault: "デフォルト（画像から画像）",
+      operationModeMock: "モック（ローカルノイズ）",
+      operationModeTestT2i: "テスト（AI テキストから画像）",
+      themeLight: "ライト",
+      themeDark: "ダーク",
       apiKey: "Google AI API キー",
       apiKeyHint: "Google AI リクエストに使用します。この端末にのみ保存されます。",
       apiUrl: "API ベース URL",
@@ -197,6 +263,7 @@ const translations = {
       promptTemplate: "プロンプトテンプレート",
       promptTemplateWithReference: "プロンプトテンプレート（参照あり）",
       promptTemplateWithoutReference: "プロンプトテンプレート（参照なし）",
+      placeholdersLabel: "プレースホルダー",
       restoreDefault: "デフォルトに戻す",
       cancel: "キャンセル",
       save: "保存",
