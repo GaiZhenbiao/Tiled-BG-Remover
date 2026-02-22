@@ -27,6 +27,8 @@
   let rows = 2;
   let cols = 2;
   let overlap = 0;
+  let overlapXRatio = 0;
+  let overlapYRatio = 0;
   let aiOutputRes = selectedModel.includes('gemini-3-pro') ? 2048 : 1024;
   let concurrency = 2;
   let smartGridEnabled = true;
@@ -38,6 +40,7 @@
   );
   let smartQualitySliderPx = smartTileTolerancePx;
   let showTileLines = localStorage.getItem('show_tile_lines') === 'true';
+  let alwaysSquareTiles = localStorage.getItem('always_square_tiles') === 'true';
   let isAdjustingGrid = false;
   let gridAdjustTimer: ReturnType<typeof setTimeout> | null = null;
   
@@ -109,6 +112,7 @@
     bgRemovalEnabled = localStorage.getItem('bg_removal_enabled') === 'true';
     keyColor = localStorage.getItem('key_color') || 'green';
     tolerance = parseInt(localStorage.getItem('key_tolerance') || '10');
+    alwaysSquareTiles = localStorage.getItem('always_square_tiles') === 'true';
   }
 
   function parseThemeMode(value: string | null): ThemeMode {
@@ -211,10 +215,28 @@
     cols = computeSmartGridCount(imgWidth, smartMaxTileSize, O);
     rows = computeSmartGridCount(imgHeight, smartMaxTileSize, O);
   }
+
+  $: overlapXRatio = overlap;
+  $: overlapYRatio = overlap;
+  $: if (alwaysSquareTiles && imgWidth > 0 && imgHeight > 0 && rows > 0 && cols > 0) {
+    const safeColsDenom = cols - (cols - 1) * overlap;
+    const safeRowsDenom = rows - (rows - 1) * overlap;
+    if (safeColsDenom > 0 && safeRowsDenom > 0) {
+      const baseTileW = imgWidth / safeColsDenom;
+      const baseTileH = imgHeight / safeRowsDenom;
+      const targetSquareSide = Math.max(baseTileW, baseTileH);
+      const nextOverlapX =
+        cols <= 1 ? 0 : (cols - imgWidth / targetSquareSide) / (cols - 1);
+      const nextOverlapY =
+        rows <= 1 ? 0 : (rows - imgHeight / targetSquareSide) / (rows - 1);
+      overlapXRatio = Math.min(0.95, Math.max(0, nextOverlapX));
+      overlapYRatio = Math.min(0.95, Math.max(0, nextOverlapY));
+    }
+  }
   
   // Resolution Info
-  $: tileW = imgWidth / (cols - (cols - 1) * overlap);
-  $: tileH = imgHeight / (rows - (rows - 1) * overlap);
+  $: tileW = imgWidth / (cols - (cols - 1) * overlapXRatio);
+  $: tileH = imgHeight / (rows - (rows - 1) * overlapYRatio);
   $: totalTiles = rows * cols;
 
   function handleImageSelected(path: string) {
@@ -525,8 +547,24 @@
               
               <div class="flex flex-col gap-1">
                 <div class="flex justify-between items-center">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">{$t('overlap')} ({Math.round(overlap*100)}%)</span>
-                  <input id="overlap-slider" type="range" min="0" max="0.5" step="0.05" bind:value={overlap} on:input={markGridAdjusting} class="w-32 accent-blue-500">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    {#if alwaysSquareTiles}
+                      {$t('overlap')} X:{Math.round(overlapXRatio * 100)}% / Y:{Math.round(overlapYRatio * 100)}%
+                    {:else}
+                      {$t('overlap')} ({Math.round(overlap * 100)}%)
+                    {/if}
+                  </span>
+                  <input
+                    id="overlap-slider"
+                    type="range"
+                    min="0"
+                    max="0.5"
+                    step="0.05"
+                    bind:value={overlap}
+                    on:input={markGridAdjusting}
+                    class="w-32 accent-blue-500 disabled:opacity-40"
+                    disabled={alwaysSquareTiles}
+                  >
                 </div>
               </div>
 
@@ -708,7 +746,9 @@
           src={imagePath} 
           {rows} 
           {cols} 
-          {overlap} 
+          overlap={overlap}
+          overlapXRatio={overlapXRatio}
+          overlapYRatio={overlapYRatio}
           {aiOutputRes}
           {bgRemovalEnabled}
           {keyColor}

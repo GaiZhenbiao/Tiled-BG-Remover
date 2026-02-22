@@ -206,7 +206,8 @@ pub fn split_image(
     input_path: &str,
     rows: u32,
     cols: u32,
-    overlap_ratio: f64,
+    overlap_ratio_x: f64,
+    overlap_ratio_y: f64,
     prefer_jpeg: bool,
     output_dir: &Path,
 ) -> Result<(Vec<TileInfo>, u32, u32, String), String> {
@@ -228,16 +229,16 @@ pub fn split_image(
     save_image_fast(&original_copy_path, &img_rgba, image_format)?;
     let new_input_path = original_copy_path.to_string_lossy().to_string();
 
-    let denom_w = cols as f64 - (cols as f64 - 1.0) * overlap_ratio;
-    let denom_h = rows as f64 - (rows as f64 - 1.0) * overlap_ratio;
+    let denom_w = cols as f64 - (cols as f64 - 1.0) * overlap_ratio_x;
+    let denom_h = rows as f64 - (rows as f64 - 1.0) * overlap_ratio_y;
     if denom_w <= 0.0 || denom_h <= 0.0 {
         return Err("Invalid overlap/grid configuration".to_string());
     }
 
     let tile_w = (w as f64 / denom_w).ceil() as u32;
     let tile_h = (h as f64 / denom_h).ceil() as u32;
-    let overlap_w = (tile_w as f64 * overlap_ratio) as u32;
-    let overlap_h = (tile_h as f64 * overlap_ratio) as u32;
+    let overlap_w = (tile_w as f64 * overlap_ratio_x) as u32;
+    let overlap_h = (tile_h as f64 * overlap_ratio_y) as u32;
     let stride_w = tile_w.saturating_sub(overlap_w).max(1);
     let stride_h = tile_h.saturating_sub(overlap_h).max(1);
 
@@ -290,7 +291,8 @@ pub fn merge_tiles(
     tile_paths: Vec<(u32, u32, String)>,
     original_w: u32,
     original_h: u32,
-    overlap_ratio: f64,
+    overlap_ratio_x: f64,
+    overlap_ratio_y: f64,
     key_color: &str,
     remove_bg: bool,
     tolerance: u8,
@@ -307,16 +309,16 @@ pub fn merge_tiles(
     let rows = max_r + 1;
     let cols = max_c + 1;
 
-    let denom_w = cols as f64 - (cols as f64 - 1.0) * overlap_ratio;
-    let denom_h = rows as f64 - (rows as f64 - 1.0) * overlap_ratio;
+    let denom_w = cols as f64 - (cols as f64 - 1.0) * overlap_ratio_x;
+    let denom_h = rows as f64 - (rows as f64 - 1.0) * overlap_ratio_y;
     if denom_w <= 0.0 || denom_h <= 0.0 {
         return Err("Invalid overlap/grid configuration".to_string());
     }
 
     let tile_w = (original_w as f64 / denom_w).ceil() as u32;
     let tile_h = (original_h as f64 / denom_h).ceil() as u32;
-    let overlap_w = (tile_w as f64 * overlap_ratio) as u32;
-    let overlap_h = (tile_h as f64 * overlap_ratio) as u32;
+    let overlap_w = (tile_w as f64 * overlap_ratio_x) as u32;
+    let overlap_h = (tile_h as f64 * overlap_ratio_y) as u32;
     let stride_w = tile_w.saturating_sub(overlap_w).max(1);
     let stride_h = tile_h.saturating_sub(overlap_h).max(1);
 

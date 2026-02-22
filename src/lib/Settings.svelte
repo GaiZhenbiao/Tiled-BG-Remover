@@ -41,6 +41,7 @@ Return only the generated tile image.`;
   let operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
   let verboseLogging = localStorage.getItem('verbose_logging') === 'true';
   let useFullImageReference = localStorage.getItem('use_full_image_reference') === 'true';
+  let alwaysSquareTiles = localStorage.getItem('always_square_tiles') === 'true';
   let bgRemovalSetting = localStorage.getItem('bg_removal_enabled') === 'true';
   let keyColorSetting = localStorage.getItem('key_color') || 'green';
   let toleranceSetting = parseInt(localStorage.getItem('key_tolerance') || '10');
@@ -68,6 +69,7 @@ Return only the generated tile image.`;
     localStorage.setItem('gemini_operation_mode', operationMode);
     localStorage.setItem('verbose_logging', verboseLogging.toString());
     localStorage.setItem('use_full_image_reference', useFullImageReference.toString());
+    localStorage.setItem('always_square_tiles', alwaysSquareTiles.toString());
     localStorage.setItem('bg_removal_enabled', bgRemovalSetting.toString());
     localStorage.setItem('key_color', keyColorSetting);
     localStorage.setItem('key_tolerance', String(toleranceSetting));
@@ -128,6 +130,11 @@ Return only the generated tile image.`;
       <label class="flex items-center justify-between gap-3 rounded border border-gray-200 dark:border-gray-700 p-2">
         <span class="text-sm text-gray-700 dark:text-gray-300">{$t('settings.fullImageReference')}</span>
         <input type="checkbox" bind:checked={useFullImageReference} class="accent-blue-600">
+      </label>
+
+      <label class="flex items-center justify-between gap-3 rounded border border-gray-200 dark:border-gray-700 p-2">
+        <span class="text-sm text-gray-700 dark:text-gray-300">{$t('settings.alwaysSquareTiles')}</span>
+        <input type="checkbox" bind:checked={alwaysSquareTiles} class="accent-blue-600">
       </label>
 
       <label class="flex items-center justify-between gap-3 rounded border border-gray-200 dark:border-gray-700 p-2">

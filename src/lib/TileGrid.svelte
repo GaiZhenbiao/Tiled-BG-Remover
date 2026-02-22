@@ -11,6 +11,8 @@
   export let rows: number;
   export let cols: number;
   export let overlap: number;
+  export let overlapXRatio: number = overlap;
+  export let overlapYRatio: number = overlap;
   export let isProcessing: boolean;
   export let aiOutputRes: number;
   export let bgRemovalEnabled: boolean;
@@ -568,7 +570,7 @@
     activePointerId = null;
   }
   
-  $: if (rows && cols && overlap >= 0 && imgElement) {
+  $: if (rows && cols && overlapXRatio >= 0 && overlapYRatio >= 0 && imgElement) {
     calculateGrid();
   }
 
@@ -586,11 +588,11 @@
     originalH = h;
     
     // Calculate tile dimensions
-    const tileW = w / (cols - (cols - 1) * overlap);
-    const tileH = h / (rows - (rows - 1) * overlap);
+    const tileW = w / (cols - (cols - 1) * overlapXRatio);
+    const tileH = h / (rows - (rows - 1) * overlapYRatio);
     
-    const overlapW = tileW * overlap;
-    const overlapH = tileH * overlap;
+    const overlapW = tileW * overlapXRatio;
+    const overlapH = tileH * overlapYRatio;
     
     tiles = [];
     for (let r = 0; r < rows; r++) {
@@ -699,7 +701,8 @@
             tiles: updatePayload,
             originalW: Math.round(originalW),
             originalH: Math.round(originalH),
-            overlapRatio: overlap,
+            overlapRatioX: overlapXRatio,
+            overlapRatioY: overlapYRatio,
             keyColor: bgRemovalEnabled ? keyColor : 'white',
             removeBg: bgRemovalEnabled,
             tolerance: tolerance
@@ -720,7 +723,8 @@
           path: src,
           rows,
           cols,
-          overlapRatio: overlap,
+          overlapRatioX: overlapXRatio,
+          overlapRatioY: overlapYRatio,
           // Always prefer JPEG during tiling/AI stages to avoid alpha-channel PNG issues.
           preferJpeg: true
         });
