@@ -245,11 +245,8 @@ pub fn split_image(
     let mut tile_configs = Vec::with_capacity((rows * cols) as usize);
     for r in 0..rows {
         for c in 0..cols {
-            let x = c * stride_w;
-            let y = r * stride_h;
-            if x >= w || y >= h {
-                continue;
-            }
+            let x = (c * stride_w).min(w.saturating_sub(1));
+            let y = (r * stride_h).min(h.saturating_sub(1));
             let actual_w = tile_w.min(w - x);
             let actual_h = tile_h.min(h - y);
             if actual_w == 0 || actual_h == 0 {
@@ -345,11 +342,8 @@ pub fn merge_tiles(
     let jobs: Vec<TileJob> = tile_paths
         .into_iter()
         .filter_map(|(r, c, path)| {
-            let start_x = c * stride_w;
-            let start_y = r * stride_h;
-            if start_x >= original_w || start_y >= original_h {
-                return None;
-            }
+            let start_x = (c * stride_w).min(original_w.saturating_sub(1));
+            let start_y = (r * stride_h).min(original_h.saturating_sub(1));
 
             let expected_w = tile_w.min(original_w - start_x);
             let expected_h = tile_h.min(original_h - start_y);

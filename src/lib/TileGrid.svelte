@@ -688,11 +688,17 @@
   }
 
   async function mergeAll() {
-      const updatePayload = tiles.map((t: any) => ({
+      const updatePayload = tiles
+        .filter((t: any) => !!t.path)
+        .map((t: any) => ({
         r: t.r,
         c: t.c,
         path: t.path
       }));
+
+      if (updatePayload.length === 0) {
+        throw new Error('No generated tile paths available to merge.');
+      }
       
       dispatch('log', { type: 'info', message: 'Merging tiles...' });
       isMerging = true;
@@ -736,17 +742,24 @@
             dispatch('update_src', splitRes.new_input_path);
         }
 
-        let i = 0;
+        const tileMap = new Map<string, any>();
         for (const resTile of splitRes.tiles) {
-            if (tiles[i]) {
-                tiles[i].x = resTile.x;
-                tiles[i].y = resTile.y;
-                tiles[i].w = resTile.width;
-                tiles[i].h = resTile.height;
-                tiles[i].path = resTile.path;
-                tiles[i].originalPath = resTile.original_path;
+            tileMap.set(`${resTile.r},${resTile.c}`, resTile);
+        }
+
+        for (const tile of tiles) {
+            const mapped = tileMap.get(`${tile.r},${tile.c}`);
+            if (mapped) {
+                tile.x = mapped.x;
+                tile.y = mapped.y;
+                tile.w = mapped.width;
+                tile.h = mapped.height;
+                tile.path = mapped.path;
+                tile.originalPath = mapped.original_path;
+            } else {
+                tile.path = '';
+                tile.originalPath = '';
             }
-            i++;
         }
         dispatch('log', { type: 'success', message: 'Image split successfully.' });
         return splitRes;
@@ -761,7 +774,12 @@
       tiles = [...tiles]; 
       
       // Process with concurrency limit
-      const queue = [...tiles.keys()];
+      const queue = tiles
+        .map((tile, index) => (tile.path && tile.originalPath ? index : -1))
+        .filter((index) => index >= 0);
+      if (queue.length === 0) {
+        throw new Error('No valid tiles were prepared. Please adjust overlap/grid settings.');
+      }
       
       const workers = Array(concurrency).fill(null).map(async () => {
           while (queue.length > 0) {
