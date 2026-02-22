@@ -122,6 +122,7 @@ const translations = {
       restoreDefault: "Restore default",
       cancel: "Cancel",
       save: "Save",
+      version: "Version",
       experimental: "Experimental: try 'gemini-3-pro-image-preview' if available.",
       testMode: "Test Generation Mode (Mock)"
     }
@@ -205,6 +206,7 @@ const translations = {
       restoreDefault: "恢复默认",
       cancel: "取消",
       save: "保存",
+      version: "版本",
       experimental: "实验性：如果可用，请尝试 'gemini-3-pro-image-preview'。",
       testMode: "测试生成模式 (模拟)"
     }
@@ -288,6 +290,7 @@ const translations = {
       restoreDefault: "デフォルトに戻す",
       cancel: "キャンセル",
       save: "保存",
+      version: "バージョン",
       experimental: "実験的：利用可能な場合は 'gemini-3-pro-image-preview' を試してください。",
       testMode: "テスト生成モード (モック)"
     }

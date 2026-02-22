@@ -45,6 +45,7 @@ Return only the generated tile image.`;
   let keyColorSetting = localStorage.getItem('key_color') || 'green';
   let toleranceSetting = parseInt(localStorage.getItem('key_tolerance') || '10');
   let showApiKey = false;
+  const appVersion = __APP_VERSION__;
 
   function restorePromptTemplateWithReference() {
     promptTemplateWithReference = DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE;
@@ -250,6 +251,9 @@ Return only the generated tile image.`;
     <div class="flex justify-end gap-2 mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 transition-colors">
       <button on:click={() => dispatch('close')} class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded transition-colors">{$t('settings.cancel')}</button>
       <button on:click={save} class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded shadow-lg transition-colors">{$t('settings.save')}</button>
+    </div>
+    <div class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400">
+      {$t('settings.version')}: v{appVersion}
     </div>
   </div>
 </div>
