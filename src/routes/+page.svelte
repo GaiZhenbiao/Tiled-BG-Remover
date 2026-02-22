@@ -707,7 +707,6 @@
               {/if}
             </div>
 
-            <hr class="border-gray-200 dark:border-gray-700">
         {:else}
           <!-- Logs Tab -->
           <div class="flex flex-col gap-2 font-mono text-[11px]">
