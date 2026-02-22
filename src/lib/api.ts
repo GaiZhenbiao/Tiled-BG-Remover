@@ -84,10 +84,11 @@ function isLikelySubject(candidate: string): boolean {
   if (!candidate) return false;
   if (!/[a-z]/i.test(candidate)) return false;
   if (candidate.length < 3) return false;
+  if (candidate.length > 64) return false;
   if (/^[a-z]$/i.test(candidate)) return false;
 
   const words = candidate.split(/\s+/).filter(Boolean);
-  if (words.length === 0 || words.length > 4) return false;
+  if (words.length === 0 || words.length > 8) return false;
   if (words.some((w) => w.length <= 1)) return false;
 
   const invalid = new Set(['unknown', 'none', 'n a', 'n/a', 'subject', 'object']);
@@ -245,7 +246,7 @@ export async function detectMainSubject(
 
   const first = normalizeSubject(
     await runSubjectPrompt(
-      "Identify the primary foreground object. Return one concise common noun phrase in English (1-3 words), lowercase, no explanation."
+      "Identify the primary foreground object. Return one concise common noun phrase in English (prefer 1-3 words, up to 8 words if needed), lowercase, with no explanation."
     )
   );
   if (first) return first;
@@ -253,8 +254,8 @@ export async function detectMainSubject(
   try {
     const retry = normalizeSubject(
       await runSubjectPrompt(
-        "Return exactly one common object noun phrase in English, 1-3 words, lowercase. Never return a single letter or symbol. Example outputs: bicycle, road bicycle, person, shoe.",
-        32
+        "Return exactly one common object noun phrase in English, concise, lowercase (prefer 1-3 words, allow up to 8 words if needed). Never return a single letter or symbol. Example outputs: bicycle, road bicycle, mountain bike frame, person, running shoe.",
+        48
       )
     );
     if (retry) return retry;
