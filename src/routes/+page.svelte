@@ -708,14 +708,6 @@
             </div>
 
             <hr class="border-gray-200 dark:border-gray-700">
-
-            <button 
-              on:click={() => isProcessing = true}
-              class="bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
-              disabled={isProcessing || !imagePath}
-            >
-              {isProcessing ? $t('processing') : $t('processAll')}
-            </button>
         {:else}
           <!-- Logs Tab -->
           <div class="flex flex-col gap-2 font-mono text-[11px]">
@@ -733,6 +725,18 @@
           </div>
         {/if}
       </div>
+
+      {#if activeTab === 'controls'}
+        <div class="px-4 pt-3 pb-4 border-t border-gray-200/70 dark:border-gray-700/70 bg-white/65 dark:bg-gray-800/55 backdrop-blur-md z-10">
+          <button 
+            on:click={() => isProcessing = true}
+            class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
+            disabled={isProcessing || !imagePath}
+          >
+            {isProcessing ? $t('processing') : $t('processAll')}
+          </button>
+        </div>
+      {/if}
     </aside>
 
     <!-- Main View -->
