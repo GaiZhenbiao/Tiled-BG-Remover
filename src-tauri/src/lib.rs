@@ -819,9 +819,6 @@ fn save_export_bundle_sync(
 
     let mut sorted_tiles: Vec<ExportTile> = Vec::new();
     if save_tiles || save_psd {
-        if save_tiles && tiles.is_empty() {
-            return Err("No tile metadata available for selected export contents.".to_string());
-        }
         sorted_tiles = tiles;
         sorted_tiles.sort_unstable_by_key(|t| (t.r, t.c));
     }

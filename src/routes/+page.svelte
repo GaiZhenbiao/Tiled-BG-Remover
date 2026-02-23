@@ -203,7 +203,6 @@
   let exportSetAsDefault = false;
   let exportSelectionError = '';
   let hasTileMetadataForExport = false;
-  let hasLayerMetadataForExport = false;
   
   // Image Info
   let imgWidth = 0;
@@ -215,7 +214,6 @@
   let subjectError = '';
   let subjectDetectSeq = 0;
   $: hasTileMetadataForExport = exportTiles.length > 0;
-  $: hasLayerMetadataForExport = exportTiles.length > 0 || exportOverlays.length > 0;
   $: promptSubject = (manualSubject.trim() || detectedSubject || 'main subject');
   
   $: if (imagePath) {
@@ -464,8 +462,8 @@
     exportSelectionError = '';
     exportSetAsDefault = false;
     exportIncludeMerged = exportDefaults.saveMerged;
-    exportIncludeTiles = hasTileMetadataForExport && exportDefaults.saveTiles;
-    exportIncludePsd = hasLayerMetadataForExport && exportDefaults.savePsd;
+    exportIncludeTiles = exportDefaults.saveTiles;
+    exportIncludePsd = exportDefaults.savePsd;
     showFolderNameModal = true;
   }
 
@@ -1035,21 +1033,19 @@
             />
             <span>{$t('exportItemMerged')}</span>
           </label>
-          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200 {hasLayerMetadataForExport ? '' : 'opacity-50'}">
+          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200">
             <input
               type="checkbox"
               bind:checked={exportIncludeTiles}
-              disabled={!hasTileMetadataForExport}
-              class="rounded border-gray-300 dark:border-gray-600 disabled:cursor-not-allowed"
+              class="rounded border-gray-300 dark:border-gray-600"
             />
             <span>{$t('exportItemTiles')}</span>
           </label>
-          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200 {hasTileMetadataForExport ? '' : 'opacity-50'}">
+          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200">
             <input
               type="checkbox"
               bind:checked={exportIncludePsd}
-              disabled={!hasLayerMetadataForExport}
-              class="rounded border-gray-300 dark:border-gray-600 disabled:cursor-not-allowed"
+              class="rounded border-gray-300 dark:border-gray-600"
             />
             <span>{$t('exportItemPsd')}</span>
           </label>
