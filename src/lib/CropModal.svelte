@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { t } from './i18n';
 
   const dispatch = createEventDispatcher();
 
@@ -182,7 +183,7 @@
   }
 
   const aspectRatios = [
-    { label: 'Free', value: null },
+    { label: 'free', value: null },
     { label: '1:1', value: 1 },
     { label: '4:3', value: 4/3 },
     { label: '16:9', value: 16/9 },
@@ -201,7 +202,7 @@
         bind:this={imgElement} 
         on:load={handleImageLoad}
         class="max-h-[70vh] max-w-full select-none shadow-2xl"
-        alt="To crop"
+        alt={$t('cropImageAlt')}
         draggable="false"
       />
       
@@ -251,14 +252,14 @@
           on:click={() => aspectRatio = ar.value}
           class="px-4 py-1.5 rounded-full text-sm font-medium transition-all {aspectRatio === ar.value ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700'}"
         >
-          {ar.label}
+          {ar.label === 'free' ? $t('freeAspect') : ar.label}
         </button>
       {/each}
     </div>
     
     <div class="flex gap-4">
-      <button on:click={() => dispatch('cancel')} class="px-8 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg font-bold border border-gray-700 transition-colors">Cancel</button>
-      <button on:click={done} class="px-8 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold shadow-lg transition-all active:scale-95">Done</button>
+      <button on:click={() => dispatch('cancel')} class="px-8 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg font-bold border border-gray-700 transition-colors">{$t('settings.cancel')}</button>
+      <button on:click={done} class="px-8 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold shadow-lg transition-all active:scale-95">{$t('done')}</button>
     </div>
   </div>
 </div>

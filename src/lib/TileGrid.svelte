@@ -1415,14 +1415,14 @@
               if (shouldStopWhenProcessingOff && !isProcessing) break;
               updateStatus(
                 statusLabel,
-                `Tile ${tileKey.r},${tileKey.c} (${Math.min(completed + 1, total)}/${total})`,
+                `${String($t('statusTile'))} ${tileKey.r},${tileKey.c} (${Math.min(completed + 1, total)}/${total})`,
                 total > 0 ? Math.round((completed / total) * 100) : 0
               );
               await processTileByKey(tileKey);
               completed += 1;
               updateStatus(
                 statusLabel,
-                `Completed ${completed}/${total}`,
+                `${String($t('statusCompleted'))} ${completed}/${total}`,
                 total > 0 ? Math.round((completed / total) * 100) : 100
               );
           }
@@ -1436,7 +1436,7 @@
       if (queue.length === 0) {
         throw new Error('No tiles available. Please adjust overlap/grid settings.');
       }
-      await runTileQueue(queue, true, 'Processing tiles...');
+      await runTileQueue(queue, true, String($t('processingTilesStatus')));
       
       if (isProcessing) {
          scheduleCompositePreviewRender();
@@ -1464,7 +1464,11 @@
   async function regenerateTile(index: number) {
     const tile = tiles[index];
     if (tile) {
-      updateStatus('Generating tile...', `Tile ${tile.r},${tile.c}`, null);
+      updateStatus(
+        String($t('generatingTileStatus')),
+        `${String($t('statusTile'))} ${tile.r},${tile.c}`,
+        null
+      );
     }
     try {
       if (!tile) return;
@@ -1481,7 +1485,7 @@
 
     try {
       isRegionProcessing = true;
-      updateStatus('Preparing selection...', '', null);
+      updateStatus(String($t('preparingSelectionStatus')), '', null);
       if (!hasEditedSelectionBox) {
         throw new Error('Please draw or adjust the selection box before generating.');
       }
@@ -1501,8 +1505,8 @@
         height: Math.max(1, Math.round(boxH))
       };
       updateStatus(
-        'Generating selection region...',
-        `${region.width}x${region.height}, ${selectedCount} tiles affected`,
+        String($t('generatingSelectionRegionStatus')),
+        `${String($t('statusRegion'))} ${region.width}x${region.height}, ${selectedCount} ${String($t('tileCount'))}`,
         10
       );
 
@@ -1566,7 +1570,11 @@
         resultB64Raw,
         bgRemovalEnabled ? 'image/png' : 'image/jpeg'
       );
-      updateStatus('Applying selection overlay...', `Region ${region.width}x${region.height}`, 90);
+      updateStatus(
+        String($t('applyingSelectionOverlayStatus')),
+        `${String($t('statusRegion'))} ${region.width}x${region.height}`,
+        90
+      );
 
       regionOverlays = [
         ...regionOverlays,
@@ -1671,7 +1679,7 @@
              <div class="absolute inset-0 bg-black/50 flex flex-col items-center justify-center z-30 backdrop-blur-[1px]">
                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-white mb-4"></div>
                <span class="text-white font-bold bg-black/50 px-3 py-1 rounded">
-                 {isSplitting ? 'Splitting Image...' : 'Merging Tiles...'}
+                 {isSplitting ? $t('splittingImageStatus') : $t('mergingTilesStatus')}
                </span>
              </div>
            {/if}
