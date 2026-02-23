@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import ImageUploader from '../lib/ImageUploader.svelte';
   import TileGrid from '../lib/TileGrid.svelte';
   import Settings from '../lib/Settings.svelte';
@@ -359,6 +359,8 @@
       exportDirPath = '';
       exportMergedPath = '';
       updateExportAlert(10, String($t('exporting')));
+      await tick();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
       const localizedSuffix = String($t('bgRemovedSuffix'));
 
@@ -989,9 +991,14 @@
           <button
             type="button"
             on:click={closeExportAlert}
-            class="text-xs px-2 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"
+            class="p-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200"
+            aria-label={$t('settings.cancel')}
+            title={$t('settings.cancel')}
           >
-            {$t('settings.cancel')}
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
           </button>
         </div>
         <div class="w-full h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
@@ -1007,7 +1014,6 @@
         {/if}
 
         {#if exportDone && !exportError}
-          <div class="text-xs text-green-600 dark:text-green-400">{$t('exportComplete')}</div>
           <div class="text-xs text-gray-700 dark:text-gray-200 break-all">{exportMergedPath || exportDirPath}</div>
           <div class="flex items-center gap-2">
             <button
@@ -1016,13 +1022,6 @@
               class="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
             >
               {$t('openFolder')}
-            </button>
-            <button
-              type="button"
-              on:click={closeExportAlert}
-              class="px-3 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-xs"
-            >
-              {$t('settings.save')}
             </button>
           </div>
         {/if}

@@ -84,7 +84,6 @@
   let tiles: any[] = [];
   
   // Result state
-  let tempDir = '';
   let originalW = 0;
   let originalH = 0;
 
@@ -93,7 +92,6 @@
   let prevKey = keyColor;
   let prevTol = tolerance;
   let hasActiveWorkers = false;
-  let activeSplitTiles: Array<{ r: number; c: number; path: string; originalPath: string }> = [];
   let isRegionProcessing = false;
   let regionOverlays: Array<{ id: number; x: number; y: number; width: number; height: number; dataUrl: string }> = [];
   let compositeRenderSeq = 0;
@@ -115,6 +113,11 @@
   let prevBoxGenerateAspectRatio: number | null = boxGenerateAspectRatio;
   const MIN_SELECTION_SIZE = 20;
   let hasEditedSelectionBox = false;
+  let prevResultSrcState = '';
+  let statusActive = false;
+  let statusTitle = '';
+  let statusDetail = '';
+  let statusProgress: number | null = null;
   
   // Sync from parent prop only when the prop value itself changes.
   // This prevents temporary local source updates from being overwritten
@@ -129,6 +132,14 @@
   }
 
   $: buildResultPreview(resultSrc);
+  $: {
+    const current = (resultSrc || '').trim();
+    const hadPrevious = prevResultSrcState.length > 0;
+    if (hadPrevious && !current && !isProcessing && !isRegionProcessing) {
+      clearGeneratedTileState();
+    }
+    prevResultSrcState = current;
+  }
 
   $: if (effectiveSrc && effectiveSrc !== prevSrc) {
     prevSrc = effectiveSrc;
@@ -219,6 +230,35 @@
     dispatch('log', { type: 'error', message });
   }
 
+  function updateStatus(title: string, detail = '', progress: number | null = null) {
+    statusActive = true;
+    statusTitle = title;
+    statusDetail = detail;
+    statusProgress = progress;
+  }
+
+  function clearStatus() {
+    statusActive = false;
+    statusTitle = '';
+    statusDetail = '';
+    statusProgress = null;
+  }
+
+  function clearGeneratedTileState() {
+    for (const tile of tiles) {
+      if (tile.status !== 'processing') {
+        tile.status = 'pending';
+      }
+      tile.previewDataUrl = '';
+      tile.path = '';
+      tile.originalPath = '';
+      tile.renderOrder = tile.r * 1000 + tile.c;
+    }
+    regionOverlays = [];
+    tiles = [...tiles];
+    scheduleCompositePreviewRender();
+  }
+
   function createFeatheredTileCanvas(tile: any, img: HTMLImageElement): HTMLCanvasElement {
     const tileW = Math.max(1, Math.round(tile.w));
     const tileH = Math.max(1, Math.round(tile.h));
@@ -304,6 +344,19 @@
     canvas.height = originalH;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    if (displaySrc) {
+      try {
+        const baseImg = await loadImageFromDataUrl(displaySrc);
+        if (renderSeq !== compositeRenderSeq) return;
+        ctx.drawImage(baseImg, 0, 0, originalW, originalH);
+      } catch (e: any) {
+        logPreviewErrorOnce(
+          'preview-base-image',
+          `Failed to render base image for composite preview: ${e?.message || e}`
+        );
+      }
+    }
 
     const sortedTiles = [...readyTiles].sort((a, b) => {
       const ao = Number.isFinite(a.renderOrder) ? a.renderOrder : 0;
@@ -1054,6 +1107,112 @@
     }
   }
 
+  function getTileRect(tile: any) {
+    const sourceW = Math.max(1, Math.round(originalW));
+    const sourceH = Math.max(1, Math.round(originalH));
+    const x = Math.max(0, Math.min(sourceW - 1, Math.round(tile.x)));
+    const y = Math.max(0, Math.min(sourceH - 1, Math.round(tile.y)));
+    const width = Math.max(1, Math.min(Math.round(tile.w), sourceW - x));
+    const height = Math.max(1, Math.min(Math.round(tile.h), sourceH - y));
+    return { x, y, width, height };
+  }
+
+  async function cropTileInputDataUrl(tile: any, preferJpeg: boolean): Promise<string> {
+    if (!displaySrc) {
+      throw new Error('Source image is not loaded.');
+    }
+    const sourceImage = await loadImageFromDataUrl(displaySrc);
+    const rect = getTileRect(tile);
+    const canvas = document.createElement('canvas');
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Failed to create tile canvas context.');
+    }
+    ctx.drawImage(
+      sourceImage,
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+      0,
+      0,
+      rect.width,
+      rect.height
+    );
+    return canvas.toDataURL(preferJpeg ? 'image/jpeg' : 'image/png', 0.92);
+  }
+
+  async function cropRegionInputDataUrl(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    preferJpeg: boolean
+  ): Promise<string> {
+    if (!displaySrc) {
+      throw new Error('Source image is not loaded.');
+    }
+    const sourceImage = await loadImageFromDataUrl(displaySrc);
+    const sourceW = Math.max(1, Math.round(originalW));
+    const sourceH = Math.max(1, Math.round(originalH));
+    const safeX = Math.max(0, Math.min(sourceW - 1, Math.round(x)));
+    const safeY = Math.max(0, Math.min(sourceH - 1, Math.round(y)));
+    const safeW = Math.max(1, Math.min(Math.round(width), sourceW - safeX));
+    const safeH = Math.max(1, Math.min(Math.round(height), sourceH - safeY));
+    const canvas = document.createElement('canvas');
+    canvas.width = safeW;
+    canvas.height = safeH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Failed to create region canvas context.');
+    }
+    ctx.drawImage(sourceImage, safeX, safeY, safeW, safeH, 0, 0, safeW, safeH);
+    return canvas.toDataURL(preferJpeg ? 'image/jpeg' : 'image/png', 0.92);
+  }
+
+  function readPreparedValue(prepared: any, camelKey: string, snakeKey: string): string {
+    const value = prepared?.[camelKey] ?? prepared?.[snakeKey] ?? '';
+    return typeof value === 'string' ? value : '';
+  }
+
+  async function ensureTilePrepared(index: number, includeInputData: boolean): Promise<string> {
+    const tile = tiles[index];
+    if (!tile) {
+      throw new Error(`Tile ${index} not found.`);
+    }
+    const rect = getTileRect(tile);
+    const tileDataUrl = await cropTileInputDataUrl(tile, true);
+    const prepared = (await invoke('prepare_tile_from_data_url', {
+      tileBase64: tileDataUrl,
+      row: tile.r,
+      col: tile.c,
+      width: rect.width,
+      height: rect.height,
+      preferJpeg: true
+    })) as any;
+
+    const outputPath = readPreparedValue(prepared, 'outputPath', 'output_path');
+    const originalPath = readPreparedValue(prepared, 'originalPath', 'original_path');
+    const inputDataUrl = readPreparedValue(prepared, 'inputDataUrl', 'input_data_url');
+
+    if (!outputPath || !originalPath) {
+      throw new Error(`Backend did not return valid tile paths for ${tile.r},${tile.c}.`);
+    }
+
+    tile.path = outputPath;
+    tile.originalPath = originalPath;
+
+    if (!includeInputData) {
+      return '';
+    }
+    if (!inputDataUrl) {
+      throw new Error(`Backend did not return tile input data for ${tile.r},${tile.c}.`);
+    }
+    return ensureImageDataUrl(inputDataUrl, 'image/jpeg');
+  }
+
   async function processSingleTile(index: number) {
     const tile = tiles[index];
     if (!tile) return;
@@ -1064,6 +1223,7 @@
     try {
         const operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
         let resultBlob: Blob;
+        const preparedInputDataUrl = await ensureTilePrepared(index, operationMode !== 'test_t2i');
 
         if (operationMode === 'mock') {
             resultBlob = await generateMockTile(aiOutputRes, aiOutputRes, tile.r, tile.c);
@@ -1088,14 +1248,7 @@
             if (operationMode === 'test_t2i') {
                 prompt = `Generate a beautiful scenery with a big, black text saying '(${tile.r},${tile.c})' in the center.`;
             } else {
-                const splitTile = activeSplitTiles.find((t) => t.r === tile.r && t.c === tile.c);
-                const sourcePath = tile.originalPath || splitTile?.originalPath || '';
-                if (!sourcePath) {
-                    throw new Error(`Original tile source missing for ${tile.r},${tile.c}. Please split again.`);
-                }
-                // Read via Rust to bypass scope restrictions
-                const b64Data = await invoke('load_image', { path: sourcePath }) as string;
-                const res = await fetch(b64Data);
+                const res = await fetch(preparedInputDataUrl);
                 inputBlob = await res.blob();
                 fullImageBlob = useFullImageReference ? await getFullImageBlob() : null;
             }
@@ -1120,9 +1273,7 @@
         const resultB64 = await new Promise<string>(resolve => {
              reader.onloadend = () => resolve(reader.result as string);
         });
-        
-        const splitTile = activeSplitTiles.find((t) => t.r === tile.r && t.c === tile.c);
-        const outputPath = tile.path || splitTile?.path || '';
+        const outputPath = tile.path || '';
         if (!outputPath) {
           throw new Error(`Tile output path missing for ${tile.r},${tile.c}.`);
         }
@@ -1162,147 +1313,46 @@
     }
   }
 
-  async function seedTilesFromMergedResult() {
-      const parsed = parseMergedImage(resultSrc);
-      if (!parsed) return;
-      const seedTiles = tiles
-        .filter((tile) => !!tile.path)
-        .map((tile) => ({
-          path: tile.path,
-          x: Math.round(tile.x),
-          y: Math.round(tile.y),
-          width: Math.max(1, Math.round(tile.w)),
-          height: Math.max(1, Math.round(tile.h))
-        }));
-      if (seedTiles.length === 0) return;
-
-      try {
-        const seededCount = await invoke('seed_tile_outputs_from_base64', {
-          base64Data: parsed.dataUrl,
-          tiles: seedTiles
-        });
-        if ((seededCount as number) > 0) {
-          dispatch('log', {
-            type: 'info',
-            message: `Reused ${seededCount} previous tile results for current grid.`
-          });
-        }
-      } catch (e: any) {
-        dispatch('log', {
-          type: 'error',
-          message: `Failed to reuse previous merged result: ${e?.message || e}`
-        });
-      }
-  }
-
-  async function runTileQueue(queue: number[], shouldStopWhenProcessingOff: boolean) {
+  async function runTileQueue(
+    queue: number[],
+    shouldStopWhenProcessingOff: boolean,
+    statusLabel: string
+  ) {
       const pending = [...queue];
       const workerCount = Math.max(1, concurrency);
+      const total = pending.length;
+      let completed = 0;
+      updateStatus(statusLabel, `0/${total}`, 0);
       const workers = Array(workerCount).fill(null).map(async () => {
           while (pending.length > 0) {
               const index = pending.shift();
               if (index === undefined) continue;
               if (shouldStopWhenProcessingOff && !isProcessing) break;
+              const tile = tiles[index];
+              updateStatus(
+                statusLabel,
+                `Tile ${tile?.r ?? 0},${tile?.c ?? 0} (${Math.min(completed + 1, total)}/${total})`,
+                total > 0 ? Math.round((completed / total) * 100) : 0
+              );
               await processSingleTile(index);
+              completed += 1;
+              updateStatus(
+                statusLabel,
+                `Completed ${completed}/${total}`,
+                total > 0 ? Math.round((completed / total) * 100) : 100
+              );
           }
       });
       await Promise.all(workers);
   }
 
-  async function splitImageAndAssignPaths() {
-      dispatch('log', { type: 'info', message: 'Splitting image into tiles...' });
-      isSplitting = true;
-      try {
-        const sourcePath = (effectiveSrc || src || '').trim();
-        if (!sourcePath) {
-            throw new Error('No source image path available for splitting.');
-        }
-        const splitRes: any = await invoke('split_img', {
-          path: sourcePath,
-          rows,
-          cols,
-          overlapRatioX: overlapXRatio,
-          overlapRatioY: overlapYRatio,
-          // Always prefer JPEG during tiling/AI stages to avoid alpha-channel PNG issues.
-          preferJpeg: true
-        });
-        
-        tempDir = splitRes.temp_dir;
-        if (Number.isFinite(splitRes.original_width)) {
-          originalW = Math.max(1, Number(splitRes.original_width));
-        }
-        if (Number.isFinite(splitRes.original_height)) {
-          originalH = Math.max(1, Number(splitRes.original_height));
-        }
-        
-        // If the source image was in a temp dir that was just replaced, update the source
-        if (splitRes.new_input_path && splitRes.new_input_path !== effectiveSrc) {
-            effectiveSrc = splitRes.new_input_path;
-            dispatch('update_src', splitRes.new_input_path);
-        }
-
-        const tileMap = new Map<string, any>();
-        for (const resTile of splitRes.tiles) {
-            tileMap.set(`${resTile.r},${resTile.c}`, resTile);
-        }
-        activeSplitTiles = splitRes.tiles.map((resTile: any) => ({
-          r: resTile.r,
-          c: resTile.c,
-          path: resTile.path,
-          originalPath: resTile.original_path
-        }));
-
-        for (const tile of tiles) {
-            const mapped = tileMap.get(`${tile.r},${tile.c}`);
-            if (mapped) {
-                tile.x = mapped.x;
-                tile.y = mapped.y;
-                tile.w = mapped.width;
-                tile.h = mapped.height;
-                tile.path = mapped.path;
-                tile.originalPath = mapped.original_path;
-                tile.previewDataUrl = tile.previewDataUrl || '';
-            } else {
-                tile.path = '';
-                tile.originalPath = '';
-                tile.previewDataUrl = '';
-            }
-        }
-        await seedTilesFromMergedResult();
-        if (resultSrc) {
-          await buildTilePreviewsFromComposite(resultSrc);
-          // The latest composite is now baked into tile previews.
-          // Keep a single visual source and avoid drawing stale overlays twice.
-          regionOverlays = [];
-        }
-        scheduleCompositePreviewRender();
-        dispatch('log', { type: 'success', message: 'Image split successfully.' });
-        return splitRes;
-      } finally {
-        isSplitting = false;
-      }
-  }
-
   async function processAll() {
     try {
-      await splitImageAndAssignPaths();
-      tiles = [...tiles]; 
-      
-      // Process with concurrency limit
-      let queue = tiles
-        .map((tile, index) => (tile.path && tile.originalPath ? index : -1))
-        .filter((index) => index >= 0);
-      if (queue.length === 0 && activeSplitTiles.length > 0) {
-        const indexByKey = new Map<string, number>();
-        tiles.forEach((tile, index) => indexByKey.set(`${tile.r},${tile.c}`, index));
-        queue = activeSplitTiles
-          .map((tile) => indexByKey.get(`${tile.r},${tile.c}`))
-          .filter((index): index is number => index !== undefined);
-      }
+      const queue = tiles.map((_tile, index) => index);
       if (queue.length === 0) {
-        throw new Error('No valid tiles were prepared. Please adjust overlap/grid settings.');
+        throw new Error('No tiles available. Please adjust overlap/grid settings.');
       }
-      await runTileQueue(queue, true);
+      await runTileQueue(queue, true, 'Processing tiles...');
       
       if (isProcessing) {
          scheduleCompositePreviewRender();
@@ -1314,6 +1364,7 @@
       dispatch('log', { type: 'error', message: `Processing failed: ${e.message || e}` });
     } finally {
       isProcessing = false;
+      clearStatus();
     }
   }
 
@@ -1327,17 +1378,16 @@
   }
   
   async function regenerateTile(index: number) {
-    if (!tiles[index].path || !tiles[index].originalPath) {
-        try {
-            await splitImageAndAssignPaths();
-            tiles = [...tiles];
-        } catch (e) {
-            alert("Failed to prepare tiles: " + e);
-            return;
-        }
+    const tile = tiles[index];
+    if (tile) {
+      updateStatus('Generating tile...', `Tile ${tile.r},${tile.c}`, null);
     }
-    await processSingleTile(index);
-    scheduleCompositePreviewRender();
+    try {
+      await processSingleTile(index);
+      scheduleCompositePreviewRender();
+    } finally {
+      clearStatus();
+    }
   }
 
   async function generateSelectionTiles() {
@@ -1346,20 +1396,13 @@
 
     try {
       isRegionProcessing = true;
+      updateStatus('Preparing selection...', '', null);
       if (!hasEditedSelectionBox) {
         throw new Error('Please draw or adjust the selection box before generating.');
       }
-      await splitImageAndAssignPaths();
-      tiles = [...tiles];
 
       const selectedIndices = tiles
-        .map((tile, index) => {
-          const splitTile = activeSplitTiles.find((t) => t.r === tile.r && t.c === tile.c);
-          const hasOutput = !!(tile.path || splitTile?.path);
-          const hasInput = !!(tile.originalPath || splitTile?.originalPath);
-          if (!hasOutput || !hasInput) return -1;
-          return isTileIntersectingSelection(tile) ? index : -1;
-        })
+        .map((tile, index) => (isTileIntersectingSelection(tile) ? index : -1))
         .filter((index) => index >= 0);
 
       if (selectedIndices.length === 0) {
@@ -1372,6 +1415,11 @@
         width: Math.max(1, Math.round(boxW)),
         height: Math.max(1, Math.round(boxH))
       };
+      updateStatus(
+        'Generating selection region...',
+        `${region.width}x${region.height}, ${selectedCount} tiles affected`,
+        10
+      );
 
       dispatch('log', {
         type: 'info',
@@ -1398,17 +1446,13 @@
         prompt += `\nGenerate only the selected box region (${region.width}x${region.height}) from the input image.`;
 
         const useFullImageReference = isFullImageReferenceEnabled();
-        const sourcePath = (effectiveSrc || src || '').trim();
-        if (!sourcePath) throw new Error('No source image available.');
-        const regionDataUrl = (await invoke('load_image_region', {
-          path: sourcePath,
-          x: region.x,
-          y: region.y,
-          width: region.width,
-          height: region.height,
-          // Keep region input JPEG for model compatibility.
-          preferJpeg: true
-        })) as string;
+        const regionDataUrl = await cropRegionInputDataUrl(
+          region.x,
+          region.y,
+          region.width,
+          region.height,
+          true
+        );
         const regionResponse = await fetch(regionDataUrl);
         if (!regionResponse.ok) {
           throw new Error(`Failed to read region image (${regionResponse.status})`);
@@ -1438,11 +1482,16 @@
         bgRemovalEnabled ? 'image/png' : 'image/jpeg'
       );
 
+      let appliedCount = 0;
       for (const index of selectedIndices) {
         const tile = tiles[index];
-        const splitTile = activeSplitTiles.find((t) => t.r === tile.r && t.c === tile.c);
-        const outputPath = tile.path || splitTile?.path || '';
-        if (!outputPath) continue;
+        if (!tile.path || !tile.originalPath) {
+          await ensureTilePrepared(index, false);
+        }
+        const outputPath = tile.path || '';
+        if (!outputPath) {
+          continue;
+        }
         await invoke('save_image_region_blend', {
           path: outputPath,
           base64Data: resultB64,
@@ -1454,7 +1503,7 @@
           regionY: region.y,
           regionWidth: region.width,
           regionHeight: region.height,
-          fallbackPath: tile.originalPath || splitTile?.originalPath || ''
+          fallbackPath: tile.originalPath || ''
         });
         try {
           const refreshedPreview = (await invoke('load_image', { path: outputPath })) as string;
@@ -1470,6 +1519,13 @@
         }
         tile.renderOrder = Date.now() + index;
         tile.status = 'done';
+        appliedCount += 1;
+        const progress = 40 + Math.round((appliedCount / selectedCount) * 60);
+        updateStatus(
+          'Applying selection result...',
+          `Updated ${appliedCount}/${selectedCount} tiles`,
+          Math.min(100, progress)
+        );
       }
 
       regionOverlays = [
@@ -1496,6 +1552,7 @@
       });
     } finally {
       isRegionProcessing = false;
+      clearStatus();
     }
   }
 
@@ -1576,6 +1633,28 @@
                <span class="text-white font-bold bg-black/50 px-3 py-1 rounded">
                  {isSplitting ? 'Splitting Image...' : 'Merging Tiles...'}
                </span>
+             </div>
+           {/if}
+
+           {#if statusActive}
+             <div class="fixed right-4 bottom-4 z-[80] pointer-events-none">
+               <div class="rounded-lg bg-black/65 text-white border border-white/20 px-3 py-2 min-w-[230px] shadow-lg backdrop-blur-sm">
+                 <div class="flex items-center gap-2">
+                   <div class="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white/90"></div>
+                   <span class="text-xs font-semibold">{statusTitle}</span>
+                 </div>
+                 {#if statusDetail}
+                   <div class="text-[11px] text-white/80 mt-1">{statusDetail}</div>
+                 {/if}
+                 {#if statusProgress !== null}
+                   <div class="mt-2 h-1.5 w-full rounded bg-white/20 overflow-hidden">
+                     <div
+                       class="h-full bg-blue-400 transition-all duration-200"
+                       style="width: {Math.max(0, Math.min(100, statusProgress))}%;"
+                     ></div>
+                   </div>
+                 {/if}
+               </div>
              </div>
            {/if}
 

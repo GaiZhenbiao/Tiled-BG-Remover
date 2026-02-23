@@ -27,6 +27,14 @@ struct SplitResponse {
     new_input_path: String,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedTileResponse {
+    input_data_url: String,
+    output_path: String,
+    original_path: String,
+}
+
 #[tauri::command]
 fn load_image(path: String) -> Result<String, String> {
     let data = fs::read(&path).map_err(|e| e.to_string())?;
@@ -78,6 +86,68 @@ fn load_image_region(
     prefer_jpeg: bool,
 ) -> Result<String, String> {
     image_processing::load_image_region_data_url(&path, x, y, width, height, prefer_jpeg)
+}
+
+#[tauri::command]
+fn prepare_tile_from_data_url(
+    state: tauri::State<'_, AppState>,
+    tile_base64: String,
+    row: u32,
+    col: u32,
+    width: u32,
+    height: u32,
+    prefer_jpeg: bool,
+) -> Result<PreparedTileResponse, String> {
+    if width == 0 || height == 0 {
+        return Err("Tile width/height must be greater than 0".to_string());
+    }
+
+    let raw = decode_data_url(&tile_base64)?;
+    let mut tile_image = image::load_from_memory(&raw)
+        .map_err(|e| format!("Failed to decode tile image: {}", e))?
+        .to_rgba8();
+    if tile_image.width() != width || tile_image.height() != height {
+        tile_image = DynamicImage::ImageRgba8(tile_image)
+            .resize_exact(width, height, ResizeFilterType::Lanczos3)
+            .to_rgba8();
+    }
+
+    let mut state_temp = state
+        .temp_dir
+        .lock()
+        .map_err(|_| "Failed to lock state".to_string())?;
+    if state_temp.is_none() {
+        *state_temp = Some(TempDir::new().map_err(|e| e.to_string())?);
+    }
+    let td_path = state_temp
+        .as_ref()
+        .ok_or_else(|| "Temp directory is unavailable".to_string())?
+        .path()
+        .to_path_buf();
+
+    let image_format = if prefer_jpeg {
+        ExportImageFormat::Jpeg
+    } else {
+        ExportImageFormat::Png
+    };
+    let ext = image_format.ext();
+    let original_path = td_path.join(format!("orig_tile_{}_{}.{}", row, col, ext));
+    let output_path = td_path.join(format!("tile_{}_{}.{}", row, col, ext));
+
+    write_image_with_format(&original_path, &tile_image, image_format)?;
+    if !output_path.exists() {
+        write_image_with_format(&output_path, &tile_image, image_format)?;
+    }
+
+    let original_path_str = original_path.to_string_lossy().to_string();
+    let output_path_str = output_path.to_string_lossy().to_string();
+    let input_data_url = load_image(original_path_str.clone())?;
+
+    Ok(PreparedTileResponse {
+        input_data_url,
+        output_path: output_path_str,
+        original_path: original_path_str,
+    })
 }
 
 #[tauri::command]
@@ -631,8 +701,7 @@ fn save_merged_image(path: String, base64_data: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn save_export_bundle(
+fn save_export_bundle_sync(
     output_dir: String,
     merged_base64: String,
     tiles: Vec<ExportTile>,
@@ -765,6 +834,35 @@ fn save_export_bundle(
 }
 
 #[tauri::command]
+async fn save_export_bundle(
+    output_dir: String,
+    merged_base64: String,
+    tiles: Vec<ExportTile>,
+    source_path: Option<String>,
+    input_name: Option<String>,
+    folder_name: Option<String>,
+    remove_bg: bool,
+    localized_suffix: Option<String>,
+    verbose_logging: bool,
+) -> Result<SaveBundleResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        save_export_bundle_sync(
+            output_dir,
+            merged_base64,
+            tiles,
+            source_path,
+            input_name,
+            folder_name,
+            remove_bg,
+            localized_suffix,
+            verbose_logging,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
     let mut command = if cfg!(target_os = "macos") {
         let mut cmd = std::process::Command::new("open");
@@ -798,6 +896,7 @@ pub fn run() {
             crop_img,
             load_image,
             load_image_region,
+            prepare_tile_from_data_url,
             save_image,
             save_image_resized,
             save_image_region_blend,
