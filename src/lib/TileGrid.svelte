@@ -1433,7 +1433,7 @@
 
       dispatch('log', {
         type: 'info',
-        message: `Generating one continuous region for ${selectedCount} tiles...`
+        message: `Generating one continuous region overlay for ${selectedCount} tiles...`
       });
 
       const operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
@@ -1491,52 +1491,7 @@
         resultB64Raw,
         bgRemovalEnabled ? 'image/png' : 'image/jpeg'
       );
-
-      let appliedCount = 0;
-      for (const index of selectedIndices) {
-        const tile = tiles[index];
-        if (!tile.path || !tile.originalPath) {
-          await ensureTilePrepared(index, false);
-        }
-        const outputPath = tile.path || '';
-        if (!outputPath) {
-          continue;
-        }
-        await invoke('save_image_region_blend', {
-          path: outputPath,
-          base64Data: resultB64,
-          tileWidth: Math.max(1, Math.round(tile.w)),
-          tileHeight: Math.max(1, Math.round(tile.h)),
-          tileX: Math.round(tile.x),
-          tileY: Math.round(tile.y),
-          regionX: region.x,
-          regionY: region.y,
-          regionWidth: region.width,
-          regionHeight: region.height,
-          fallbackPath: tile.originalPath || ''
-        });
-        try {
-          const refreshedPreview = (await invoke('load_image', { path: outputPath })) as string;
-          tile.previewDataUrl = ensureImageDataUrl(
-            refreshedPreview,
-            bgRemovalEnabled ? 'image/png' : 'image/jpeg'
-          );
-        } catch (e: any) {
-          dispatch('log', {
-            type: 'error',
-            message: `Failed to refresh tile preview ${tile.r},${tile.c}: ${e?.message || e}`
-          });
-        }
-        tile.renderOrder = Date.now() + index;
-        tile.status = 'done';
-        appliedCount += 1;
-        const progress = 40 + Math.round((appliedCount / selectedCount) * 60);
-        updateStatus(
-          'Applying selection result...',
-          `Updated ${appliedCount}/${selectedCount} tiles`,
-          Math.min(100, progress)
-        );
-      }
+      updateStatus('Applying selection overlay...', `Region ${region.width}x${region.height}`, 90);
 
       regionOverlays = [
         ...regionOverlays,
