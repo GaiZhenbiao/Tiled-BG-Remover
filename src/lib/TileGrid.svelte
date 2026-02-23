@@ -1080,6 +1080,7 @@
     overlapYRatio >= 0 &&
     imgElement &&
     !isProcessing &&
+    !hasActiveWorkers &&
     !isSplitting &&
     !isMerging &&
     !isRegionProcessing
@@ -1121,8 +1122,8 @@
         tiles.push({
           r, c, x, y, w: tileW, h: tileH,
           status: prev?.status || 'pending',
-          path: '',          // Target path for results
-          originalPath: '',   // Source path for input
+          path: prev?.path || '',          // Target path for results
+          originalPath: prev?.originalPath || '',   // Source path for input
           previewDataUrl: prev?.previewDataUrl || '',
           renderOrder: prev?.renderOrder ?? (r * 1000 + c)
         });
@@ -1216,11 +1217,19 @@
     return typeof value === 'string' ? value : '';
   }
 
-  async function ensureTilePrepared(index: number): Promise<void> {
-    const tile = tiles[index];
-    if (!tile) {
-      throw new Error(`Tile ${index} not found.`);
+  type TileKey = { r: number; c: number };
+
+  function findTileIndexByKey(tileKey: TileKey): number {
+    return tiles.findIndex((tile) => tile.r === tileKey.r && tile.c === tileKey.c);
+  }
+
+  async function ensureTilePrepared(tileKey: TileKey): Promise<void> {
+    const index = findTileIndexByKey(tileKey);
+    if (index < 0) {
+      throw new Error(`Tile ${tileKey.r},${tileKey.c} not found.`);
     }
+
+    const tile = tiles[index];
     const prepared = (await invoke('prepare_tile_paths', {
       row: tile.r,
       col: tile.c,
@@ -1237,17 +1246,23 @@
     tile.originalPath = originalPath;
   }
 
-  async function processSingleTile(index: number) {
-    const tile = tiles[index];
-    if (!tile) return;
+  async function processTileByKey(tileKey: TileKey) {
+    const initialIndex = findTileIndexByKey(tileKey);
+    if (initialIndex < 0) return;
 
-    tiles[index].status = 'processing';
+    tiles[initialIndex].status = 'processing';
     tiles = [...tiles];
 
     try {
         const operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
         let resultBlob: Blob;
-        await ensureTilePrepared(index);
+        await ensureTilePrepared(tileKey);
+
+        const activeIndex = findTileIndexByKey(tileKey);
+        if (activeIndex < 0) {
+          throw new Error(`Tile ${tileKey.r},${tileKey.c} no longer exists.`);
+        }
+        const tile = tiles[activeIndex];
 
         if (operationMode === 'mock') {
             resultBlob = await generateMockTile(aiOutputRes, aiOutputRes, tile.r, tile.c);
@@ -1296,40 +1311,48 @@
         const resultB64 = await new Promise<string>(resolve => {
              reader.onloadend = () => resolve(reader.result as string);
         });
-        const outputPath = tile.path || '';
+        const latestIndex = findTileIndexByKey(tileKey);
+        if (latestIndex < 0) {
+          throw new Error(`Tile ${tileKey.r},${tileKey.c} no longer exists.`);
+        }
+        const latestTile = tiles[latestIndex];
+        const outputPath = latestTile.path || '';
         if (!outputPath) {
           throw new Error(`Tile output path missing for ${tile.r},${tile.c}.`);
         }
         await invoke('save_image_resized', {
           path: outputPath,
           base64Data: resultB64,
-          width: Math.round(tile.w),
-          height: Math.round(tile.h)
+          width: Math.round(latestTile.w),
+          height: Math.round(latestTile.h)
         });
-        if (!tile.path) {
-          tile.path = outputPath;
+        if (!latestTile.path) {
+          latestTile.path = outputPath;
         }
         try {
           const refreshedPreview = (await invoke('load_image', { path: outputPath })) as string;
-          tile.previewDataUrl = ensureImageDataUrl(
+          latestTile.previewDataUrl = ensureImageDataUrl(
             refreshedPreview,
             bgRemovalEnabled ? 'image/png' : 'image/jpeg'
           );
         } catch (previewLoadErr: any) {
-          tile.previewDataUrl = ensureImageDataUrl(resultB64, bgRemovalEnabled ? 'image/png' : 'image/jpeg');
+          latestTile.previewDataUrl = ensureImageDataUrl(resultB64, bgRemovalEnabled ? 'image/png' : 'image/jpeg');
           dispatch('log', {
             type: 'error',
             message: `Tile preview load fallback for ${tile.r},${tile.c}: ${previewLoadErr?.message || previewLoadErr}`
           });
         }
-        tile.renderOrder = Date.now();
-        
-        tiles[index].status = 'done';
+        latestTile.renderOrder = Date.now();
+        latestTile.status = 'done';
+
         dispatch('log', { type: 'success', message: `Tile ${tile.r},${tile.c} processed.` });
     } catch (e: any) {
-        console.error(`Error processing tile ${tile.r},${tile.c}`, e);
-        tiles[index].status = 'error';
-        dispatch('log', { type: 'error', message: `Tile ${tile.r},${tile.c}: ${e.message || e}` });
+        console.error(`Error processing tile ${tileKey.r},${tileKey.c}`, e);
+        const failedIndex = findTileIndexByKey(tileKey);
+        if (failedIndex >= 0) {
+          tiles[failedIndex].status = 'error';
+        }
+        dispatch('log', { type: 'error', message: `Tile ${tileKey.r},${tileKey.c}: ${e.message || e}` });
     } finally {
         tiles = [...tiles];
         scheduleCompositePreviewRender();
@@ -1337,7 +1360,7 @@
   }
 
   async function runTileQueue(
-    queue: number[],
+    queue: TileKey[],
     shouldStopWhenProcessingOff: boolean,
     statusLabel: string
   ) {
@@ -1348,16 +1371,15 @@
       updateStatus(statusLabel, `0/${total}`, 0);
       const workers = Array(workerCount).fill(null).map(async () => {
           while (pending.length > 0) {
-              const index = pending.shift();
-              if (index === undefined) continue;
+              const tileKey = pending.shift();
+              if (!tileKey) continue;
               if (shouldStopWhenProcessingOff && !isProcessing) break;
-              const tile = tiles[index];
               updateStatus(
                 statusLabel,
-                `Tile ${tile?.r ?? 0},${tile?.c ?? 0} (${Math.min(completed + 1, total)}/${total})`,
+                `Tile ${tileKey.r},${tileKey.c} (${Math.min(completed + 1, total)}/${total})`,
                 total > 0 ? Math.round((completed / total) * 100) : 0
               );
-              await processSingleTile(index);
+              await processTileByKey(tileKey);
               completed += 1;
               updateStatus(
                 statusLabel,
@@ -1371,7 +1393,7 @@
 
   async function processAll() {
     try {
-      const queue = tiles.map((_tile, index) => index);
+      const queue = tiles.map((tile) => ({ r: tile.r, c: tile.c }));
       if (queue.length === 0) {
         throw new Error('No tiles available. Please adjust overlap/grid settings.');
       }
@@ -1406,7 +1428,8 @@
       updateStatus('Generating tile...', `Tile ${tile.r},${tile.c}`, null);
     }
     try {
-      await processSingleTile(index);
+      if (!tile) return;
+      await processTileByKey({ r: tile.r, c: tile.c });
       scheduleCompositePreviewRender();
     } finally {
       clearStatus();
