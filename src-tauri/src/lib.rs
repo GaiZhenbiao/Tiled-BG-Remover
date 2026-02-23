@@ -151,6 +151,42 @@ fn prepare_tile_from_data_url(
 }
 
 #[tauri::command]
+fn prepare_tile_paths(
+    state: tauri::State<'_, AppState>,
+    row: u32,
+    col: u32,
+    prefer_jpeg: bool,
+) -> Result<PreparedTileResponse, String> {
+    let mut state_temp = state
+        .temp_dir
+        .lock()
+        .map_err(|_| "Failed to lock state".to_string())?;
+    if state_temp.is_none() {
+        *state_temp = Some(TempDir::new().map_err(|e| e.to_string())?);
+    }
+    let td_path = state_temp
+        .as_ref()
+        .ok_or_else(|| "Temp directory is unavailable".to_string())?
+        .path()
+        .to_path_buf();
+
+    let image_format = if prefer_jpeg {
+        ExportImageFormat::Jpeg
+    } else {
+        ExportImageFormat::Png
+    };
+    let ext = image_format.ext();
+    let original_path = td_path.join(format!("orig_tile_{}_{}.{}", row, col, ext));
+    let output_path = td_path.join(format!("tile_{}_{}.{}", row, col, ext));
+
+    Ok(PreparedTileResponse {
+        input_data_url: String::new(),
+        output_path: output_path.to_string_lossy().to_string(),
+        original_path: original_path.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
 fn save_image_region_blend(
     path: String,
     base64_data: String,
@@ -1086,6 +1122,7 @@ pub fn run() {
             load_image,
             load_image_region,
             prepare_tile_from_data_url,
+            prepare_tile_paths,
             save_image,
             save_image_resized,
             save_image_region_blend,

@@ -1140,7 +1140,23 @@
     return { x, y, width, height };
   }
 
-  async function cropTileInputDataUrl(tile: any, preferJpeg: boolean): Promise<string> {
+  function canvasToBlob(canvas: HTMLCanvasElement, mime: string, quality?: number): Promise<Blob> {
+    return new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error('Failed to encode canvas blob.'));
+            return;
+          }
+          resolve(blob);
+        },
+        mime,
+        quality
+      );
+    });
+  }
+
+  async function cropTileInputBlob(tile: any, preferJpeg: boolean): Promise<Blob> {
     if (!displaySrc) {
       throw new Error('Source image is not loaded.');
     }
@@ -1164,7 +1180,7 @@
       rect.width,
       rect.height
     );
-    return canvas.toDataURL(preferJpeg ? 'image/jpeg' : 'image/png', 0.92);
+    return canvasToBlob(canvas, preferJpeg ? 'image/jpeg' : 'image/png', 0.92);
   }
 
   async function cropRegionInputDataUrl(
@@ -1200,40 +1216,25 @@
     return typeof value === 'string' ? value : '';
   }
 
-  async function ensureTilePrepared(index: number, includeInputData: boolean): Promise<string> {
+  async function ensureTilePrepared(index: number): Promise<void> {
     const tile = tiles[index];
     if (!tile) {
       throw new Error(`Tile ${index} not found.`);
     }
-    const rect = getTileRect(tile);
-    const tileDataUrl = await cropTileInputDataUrl(tile, true);
-    const prepared = (await invoke('prepare_tile_from_data_url', {
-      tileBase64: tileDataUrl,
+    const prepared = (await invoke('prepare_tile_paths', {
       row: tile.r,
       col: tile.c,
-      width: rect.width,
-      height: rect.height,
       preferJpeg: true
     })) as any;
 
     const outputPath = readPreparedValue(prepared, 'outputPath', 'output_path');
     const originalPath = readPreparedValue(prepared, 'originalPath', 'original_path');
-    const inputDataUrl = readPreparedValue(prepared, 'inputDataUrl', 'input_data_url');
-
     if (!outputPath || !originalPath) {
       throw new Error(`Backend did not return valid tile paths for ${tile.r},${tile.c}.`);
     }
 
     tile.path = outputPath;
     tile.originalPath = originalPath;
-
-    if (!includeInputData) {
-      return '';
-    }
-    if (!inputDataUrl) {
-      throw new Error(`Backend did not return tile input data for ${tile.r},${tile.c}.`);
-    }
-    return ensureImageDataUrl(inputDataUrl, 'image/jpeg');
   }
 
   async function processSingleTile(index: number) {
@@ -1246,7 +1247,7 @@
     try {
         const operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
         let resultBlob: Blob;
-        const preparedInputDataUrl = await ensureTilePrepared(index, operationMode !== 'test_t2i');
+        await ensureTilePrepared(index);
 
         if (operationMode === 'mock') {
             resultBlob = await generateMockTile(aiOutputRes, aiOutputRes, tile.r, tile.c);
@@ -1271,8 +1272,7 @@
             if (operationMode === 'test_t2i') {
                 prompt = `Generate a beautiful scenery with a big, black text saying '(${tile.r},${tile.c})' in the center.`;
             } else {
-                const res = await fetch(preparedInputDataUrl);
-                inputBlob = await res.blob();
+                inputBlob = await cropTileInputBlob(tile, true);
                 fullImageBlob = useFullImageReference ? await getFullImageBlob() : null;
             }
             
