@@ -319,6 +319,20 @@ struct ExportOverlay {
     layer_order: u64,
 }
 
+#[derive(serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ExportRegularLayer {
+    r: u32,
+    c: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    data_url: String,
+    #[serde(default)]
+    layer_order: i64,
+}
+
 #[derive(serde::Serialize)]
 struct SaveBundleResponse {
     export_dir: String,
@@ -743,6 +757,7 @@ fn save_export_bundle_sync(
     merged_base64: String,
     tiles: Vec<ExportTile>,
     overlays: Vec<ExportOverlay>,
+    regular_layers: Vec<ExportRegularLayer>,
     source_path: Option<String>,
     input_name: Option<String>,
     folder_name: Option<String>,
@@ -862,6 +877,46 @@ fn save_export_bundle_sync(
         }
     }
 
+    if save_psd && !regular_layers.is_empty() {
+        let mut sorted_regular_layers = regular_layers;
+        sorted_regular_layers.sort_unstable_by_key(|layer| (layer.layer_order, layer.r, layer.c));
+
+        layers.clear();
+        layers.reserve(sorted_regular_layers.len());
+        for layer in sorted_regular_layers {
+            if layer.width == 0 || layer.height == 0 || layer.data_url.trim().is_empty() {
+                continue;
+            }
+            let raw = decode_data_url(&layer.data_url)?;
+            let mut layer_img = image::load_from_memory(&raw)
+                .map_err(|e| {
+                    format!(
+                        "Failed to decode regular tile layer r{} c{}: {}",
+                        layer.r, layer.c, e
+                    )
+                })?
+                .to_rgba8();
+            if layer_img.width() != layer.width || layer_img.height() != layer.height {
+                layer_img = DynamicImage::ImageRgba8(layer_img)
+                    .resize_exact(layer.width, layer.height, image::imageops::FilterType::Lanczos3)
+                    .to_rgba8();
+            }
+            layers.push(LayerExport {
+                tile: ExportTile {
+                    r: layer.r,
+                    c: layer.c,
+                    x: layer.x,
+                    y: layer.y,
+                    width: layer.width,
+                    height: layer.height,
+                    path: String::new(),
+                    original_path: String::new(),
+                },
+                image: layer_img,
+            });
+        }
+    }
+
     let mut overlay_layers: Vec<OverlayLayerExport> = if save_psd {
         Vec::with_capacity(overlays.len())
     } else {
@@ -963,6 +1018,7 @@ async fn save_export_bundle(
     merged_base64: String,
     tiles: Vec<ExportTile>,
     overlays: Vec<ExportOverlay>,
+    regular_layers: Vec<ExportRegularLayer>,
     source_path: Option<String>,
     input_name: Option<String>,
     folder_name: Option<String>,
@@ -979,6 +1035,7 @@ async fn save_export_bundle(
             merged_base64,
             tiles,
             overlays,
+            regular_layers,
             source_path,
             input_name,
             folder_name,

@@ -188,6 +188,7 @@
   let resultSrc = '';
   let exportTiles: any[] = [];
   let exportOverlays: any[] = [];
+  let exportRegularLayers: any[] = [];
   let exportAlertVisible = false;
   let exportProgress = 0;
   let exportMessage = '';
@@ -415,6 +416,7 @@
           mergedBase64: resultSrc,
           tiles: exportTiles,
           overlays: exportOverlays,
+          regularLayers: exportRegularLayers,
           sourcePath: imagePath,
           inputName: originalFilename || 'image',
           folderName,
@@ -940,6 +942,7 @@
           bind:resultSrc
           bind:exportTiles
           bind:exportOverlays
+          bind:exportRegularLayers
           on:update_src={handleTileGridSourceUpdate}
           on:box_generate_mode_change={handleBoxGenerateModeChange}
           on:log={addLog}

@@ -27,6 +27,7 @@
   export let detectedSubject: string = '';
   export let exportTiles: any[] = [];
   export let exportOverlays: any[] = [];
+  export let exportRegularLayers: any[] = [];
   export let boxGenerateMode: boolean = false;
   export let boxGenerateAspectRatio: number | null = 1;
 
@@ -192,6 +193,18 @@
     dataUrl: layer.dataUrl || '',
     layerOrder: index
   }));
+  $: exportRegularLayers = tiles
+    .filter((tile) => !!tile.previewDataUrl)
+    .map((tile, index) => ({
+      r: tile.r,
+      c: tile.c,
+      x: Math.round(tile.x),
+      y: Math.round(tile.y),
+      width: Math.max(1, Math.round(tile.w)),
+      height: Math.max(1, Math.round(tile.h)),
+      dataUrl: tile.previewDataUrl || '',
+      layerOrder: Number.isFinite(tile.renderOrder) ? Number(tile.renderOrder) : index
+    }));
   $: contentW = Math.max(1, originalW * zoom);
   $: contentH = Math.max(1, originalH * zoom);
   $: surfaceW = Math.max(contentW, containerW);
