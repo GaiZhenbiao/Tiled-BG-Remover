@@ -114,16 +114,78 @@
   
   function handleCropDone(e: any) {
     const { x, y, width, height } = e.detail;
-    performCrop(x, y, width, height);
+    void performCrop(x, y, width, height);
     showCropModal = false;
   }
 
+  function parseDataUrlMime(dataUrl: string): string {
+    const match = (dataUrl || '').match(/^data:([^;]+);base64,/i);
+    return match?.[1]?.toLowerCase() || 'image/jpeg';
+  }
+
+  function extensionFromMime(mime: string): string {
+    if (mime === 'image/png') return 'png';
+    if (mime === 'image/webp') return 'webp';
+    return 'jpg';
+  }
+
+  function splitPath(inputPath: string): { dir: string; stem: string; sep: string } {
+    const slashIdx = inputPath.lastIndexOf('/');
+    const backslashIdx = inputPath.lastIndexOf('\\');
+    const idx = Math.max(slashIdx, backslashIdx);
+    const sep = backslashIdx > slashIdx ? '\\' : '/';
+    const dir = idx >= 0 ? inputPath.slice(0, idx) : '.';
+    const fileName = idx >= 0 ? inputPath.slice(idx + 1) : inputPath;
+    const dot = fileName.lastIndexOf('.');
+    const stem = dot > 0 ? fileName.slice(0, dot) : fileName || 'image';
+    return { dir, stem, sep };
+  }
+
+  async function loadImageElement(dataUrl: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Failed to decode image for cropping.'));
+      img.src = dataUrl;
+    });
+  }
+
   async function performCrop(x: number, y: number, width: number, height: number) {
-     const newPath: string = await invoke('crop_img', {
-       path: imagePath, x, y, width, height
-     });
-     imagePath = newPath;
-     resultSrc = '';
+    try {
+      const sourceDataUrl = (await invoke('load_image', { path: imagePath })) as string;
+      const sourceMime = parseDataUrlMime(sourceDataUrl);
+      const image = await loadImageElement(sourceDataUrl);
+
+      const sourceW = Math.max(1, image.naturalWidth);
+      const sourceH = Math.max(1, image.naturalHeight);
+      const cropX = Math.max(0, Math.min(sourceW - 1, Math.round(x)));
+      const cropY = Math.max(0, Math.min(sourceH - 1, Math.round(y)));
+      const cropW = Math.max(1, Math.min(Math.round(width), sourceW - cropX));
+      const cropH = Math.max(1, Math.min(Math.round(height), sourceH - cropY));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = cropW;
+      canvas.height = cropH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Failed to create crop canvas context.');
+      ctx.drawImage(image, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+      const targetMime = sourceMime === 'image/png' ? 'image/png' : 'image/jpeg';
+      const croppedDataUrl = canvas.toDataURL(targetMime, targetMime === 'image/jpeg' ? 0.92 : undefined);
+
+      const { dir, stem, sep } = splitPath(imagePath);
+      const ext = extensionFromMime(targetMime);
+      const newPath = `${dir}${sep}${stem}_Cropped_${Date.now()}.${ext}`;
+      await invoke('save_image', {
+        path: newPath,
+        base64Data: croppedDataUrl
+      });
+      imagePath = newPath;
+      resultSrc = '';
+      logs = [{ type: 'success', message: `Image cropped: ${newPath}`, time: new Date().toLocaleTimeString() }, ...logs];
+    } catch (e: any) {
+      logs = [{ type: 'error', message: `Crop failed: ${e?.message || String(e)}`, time: new Date().toLocaleTimeString() }, ...logs];
+    }
   }
 
   function addLog(e: any) {
