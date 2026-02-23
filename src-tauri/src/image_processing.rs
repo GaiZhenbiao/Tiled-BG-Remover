@@ -109,6 +109,10 @@ fn save_image_fast_auto(path: &Path, image: &RgbaImage) -> Result<(), String> {
     save_image_fast(path, image, image_format_from_path(path))
 }
 
+pub fn save_rgba_image_auto(path: &str, image: &RgbaImage) -> Result<(), String> {
+    save_image_fast_auto(Path::new(path), image)
+}
+
 fn encode_png_data_url_fast(image: &RgbaImage) -> Result<String, String> {
     let mut buffer = Cursor::new(Vec::new());
     let encoder =
@@ -200,6 +204,36 @@ pub fn save_resized_tile(path: &str, data: &[u8], width: u32, height: u32) -> Re
         .resize_exact(width, height, ResizeFilterType::Lanczos3)
         .to_rgba8();
     save_image_fast_auto(Path::new(path), &resized)
+}
+
+pub fn load_image_region_data_url(
+    input_path: &str,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    prefer_jpeg: bool,
+) -> Result<String, String> {
+    let img = open_image_with_orientation(input_path)?.to_rgba8();
+    let (w, h) = img.dimensions();
+    if w == 0 || h == 0 {
+        return Err("Input image has invalid dimensions".to_string());
+    }
+
+    let start_x = x.min(w.saturating_sub(1));
+    let start_y = y.min(h.saturating_sub(1));
+    let crop_w = width.max(1).min(w.saturating_sub(start_x));
+    let crop_h = height.max(1).min(h.saturating_sub(start_y));
+    if crop_w == 0 || crop_h == 0 {
+        return Err("Requested region is out of bounds".to_string());
+    }
+
+    let cropped = crop_imm(&img, start_x, start_y, crop_w, crop_h).to_image();
+    if prefer_jpeg {
+        encode_jpeg_data_url_fast(&cropped, 90)
+    } else {
+        encode_png_data_url_fast(&cropped)
+    }
 }
 
 pub fn split_image(

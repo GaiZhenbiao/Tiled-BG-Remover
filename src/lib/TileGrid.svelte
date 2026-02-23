@@ -26,9 +26,13 @@
   export let showOriginalInput: boolean = false;
   export let detectedSubject: string = '';
   export let exportTiles: any[] = [];
+  export let boxGenerateMode: boolean = false;
+  export let boxGenerateAspectRatio: number | null = 1;
 
   let container: HTMLDivElement;
   let imgElement: HTMLImageElement;
+  let effectiveSrc = '';
+  let lastPropSrc = '';
   let displaySrc = '';
   let resultPreviewSrc = '';
   let resultPreviewObjectUrl: string | null = null;
@@ -89,25 +93,69 @@
   let prevKey = keyColor;
   let prevTol = tolerance;
   let hasActiveWorkers = false;
+  let activeSplitTiles: Array<{ r: number; c: number; path: string; originalPath: string }> = [];
+  let isRegionProcessing = false;
+  let regionOverlays: Array<{ id: number; x: number; y: number; width: number; height: number; dataUrl: string }> = [];
+  let compositeRenderSeq = 0;
+  const dataUrlImageCache = new Map<string, Promise<HTMLImageElement>>();
+  const previewErrorKeys = new Set<string>();
+  let isBoxDragging = false;
+  let boxDragType = '';
+  let boxStartPointerX = 0;
+  let boxStartPointerY = 0;
+  let boxStartX = 0;
+  let boxStartY = 0;
+  let boxStartW = 0;
+  let boxStartH = 0;
+  let boxX = 0;
+  let boxY = 0;
+  let boxW = 0;
+  let boxH = 0;
+  let prevBoxGenerateMode = false;
+  let prevBoxGenerateAspectRatio: number | null = boxGenerateAspectRatio;
+  const MIN_SELECTION_SIZE = 20;
+  let hasEditedSelectionBox = false;
   
-  $: if (src) {
-    loadImage(src);
+  // Sync from parent prop only when the prop value itself changes.
+  // This prevents temporary local source updates from being overwritten
+  // by a stale parent value during async `update_src` propagation.
+  $: if (src && src !== lastPropSrc) {
+    lastPropSrc = src;
+    effectiveSrc = src;
+  }
+
+  $: if (effectiveSrc) {
+    loadImage(effectiveSrc);
   }
 
   $: buildResultPreview(resultSrc);
 
-  $: if (src && src !== prevSrc) {
-    prevSrc = src;
+  $: if (effectiveSrc && effectiveSrc !== prevSrc) {
+    prevSrc = effectiveSrc;
     pendingFitOnLoad = true;
     cachedFullImageBlob = null;
     cachedFullImageSrc = '';
   }
+  $: if (
+    boxGenerateMode &&
+    originalW > 0 &&
+    originalH > 0 &&
+    (!prevBoxGenerateMode || prevBoxGenerateAspectRatio !== boxGenerateAspectRatio)
+  ) {
+    resetSelectionBox();
+  }
+  $: if (!boxGenerateMode && prevBoxGenerateMode) {
+    isBoxDragging = false;
+    boxDragType = '';
+  }
+  $: prevBoxGenerateMode = boxGenerateMode;
+  $: prevBoxGenerateAspectRatio = boxGenerateAspectRatio;
   
   $: if ((bgRemovalEnabled !== prevBG || keyColor !== prevKey || tolerance !== prevTol) && tiles.length > 0 && tiles.some(t => t.status === 'done') && !isProcessing && !isMerging) {
       prevBG = bgRemovalEnabled;
       prevKey = keyColor;
       prevTol = tolerance;
-      mergeAll();
+      scheduleCompositePreviewRender();
   }
   $: hasActiveWorkers = tiles.some((t) => t.status === 'processing');
   $: exportTiles = tiles
@@ -142,7 +190,180 @@
       cachedFullImageSrc = '';
     } catch (e) {
       console.error("Failed to load image:", e);
+      dispatch('log', { type: 'error', message: `Failed to load source image: ${String((e as any)?.message || e)}` });
     }
+  }
+
+  async function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> {
+    if (!dataUrl) throw new Error('Missing image data');
+    if (!dataUrlImageCache.has(dataUrl)) {
+      dataUrlImageCache.set(
+        dataUrl,
+        new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => {
+            dataUrlImageCache.delete(dataUrl);
+            reject(new Error('Failed to load image data URL'));
+          };
+          img.src = dataUrl;
+        })
+      );
+    }
+    return dataUrlImageCache.get(dataUrl)!;
+  }
+
+  function logPreviewErrorOnce(key: string, message: string) {
+    if (previewErrorKeys.has(key)) return;
+    previewErrorKeys.add(key);
+    dispatch('log', { type: 'error', message });
+  }
+
+  function createFeatheredTileCanvas(tile: any, img: HTMLImageElement): HTMLCanvasElement {
+    const tileW = Math.max(1, Math.round(tile.w));
+    const tileH = Math.max(1, Math.round(tile.h));
+    const layer = document.createElement('canvas');
+    layer.width = tileW;
+    layer.height = tileH;
+    const ctx = layer.getContext('2d');
+    if (!ctx) return layer;
+
+    ctx.clearRect(0, 0, tileW, tileH);
+    ctx.drawImage(img, 0, 0, tileW, tileH);
+
+    const leftFeather = tile.c > 0 ? Math.max(0, Math.round(tileW * overlapXRatio)) : 0;
+    const topFeather = tile.r > 0 ? Math.max(0, Math.round(tileH * overlapYRatio)) : 0;
+    if (leftFeather <= 0 && topFeather <= 0) {
+      return layer;
+    }
+
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.fillStyle = 'rgba(255,255,255,1)';
+    ctx.fillRect(0, 0, tileW, tileH);
+
+    if (leftFeather > 0) {
+      const g = ctx.createLinearGradient(0, 0, leftFeather, 0);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(1, 'rgba(255,255,255,1)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, leftFeather, tileH);
+    }
+
+    if (topFeather > 0) {
+      const g = ctx.createLinearGradient(0, 0, 0, topFeather);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(1, 'rgba(255,255,255,1)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, tileW, topFeather);
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    return layer;
+  }
+
+  async function buildTilePreviewsFromComposite(compositeDataUrl: string) {
+    if (!compositeDataUrl || tiles.length === 0 || originalW <= 0 || originalH <= 0) return;
+    let img: HTMLImageElement;
+    try {
+      img = await loadImageFromDataUrl(compositeDataUrl);
+    } catch (e: any) {
+      logPreviewErrorOnce('preview-load-composite', `Failed to build tile previews from composite: ${e?.message || e}`);
+      return;
+    }
+    for (const tile of tiles) {
+      const tileW = Math.max(1, Math.round(tile.w));
+      const tileH = Math.max(1, Math.round(tile.h));
+      const tileX = Math.round(tile.x);
+      const tileY = Math.round(tile.y);
+      const canvas = document.createElement('canvas');
+      canvas.width = tileW;
+      canvas.height = tileH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
+      ctx.drawImage(img, tileX, tileY, tileW, tileH, 0, 0, tileW, tileH);
+      tile.previewDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      tile.status = 'done';
+    }
+  }
+
+  async function renderCompositePreview() {
+    const renderSeq = ++compositeRenderSeq;
+    if (originalW <= 0 || originalH <= 0) return;
+
+    const readyTiles = tiles.filter((tile) => !!tile.previewDataUrl);
+    const hasLayers = readyTiles.length > 0 || regionOverlays.length > 0;
+    if (!hasLayers) {
+      if (!isProcessing && !isRegionProcessing) {
+        resultSrc = '';
+      }
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = originalW;
+    canvas.height = originalH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const sortedTiles = [...readyTiles].sort((a, b) => {
+      const ao = Number.isFinite(a.renderOrder) ? a.renderOrder : 0;
+      const bo = Number.isFinite(b.renderOrder) ? b.renderOrder : 0;
+      if (ao !== bo) return ao - bo;
+      return a.r - b.r || a.c - b.c;
+    });
+    for (const tile of sortedTiles) {
+      if (renderSeq !== compositeRenderSeq) return;
+      const tileW = Math.max(1, Math.round(tile.w));
+      const tileH = Math.max(1, Math.round(tile.h));
+      const tileX = Math.round(tile.x);
+      const tileY = Math.round(tile.y);
+      try {
+        const img = await loadImageFromDataUrl(tile.previewDataUrl);
+        if (renderSeq !== compositeRenderSeq) return;
+        const feathered = createFeatheredTileCanvas(tile, img);
+        ctx.globalAlpha = 1;
+        ctx.drawImage(feathered, tileX, tileY, tileW, tileH);
+      } catch (e: any) {
+        logPreviewErrorOnce(
+          `preview-tile-${tile.r}-${tile.c}`,
+          `Failed to render tile preview ${tile.r},${tile.c}: ${e?.message || e}`
+        );
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    for (const layer of regionOverlays) {
+      if (renderSeq !== compositeRenderSeq) return;
+      try {
+        const img = await loadImageFromDataUrl(layer.dataUrl);
+        if (renderSeq !== compositeRenderSeq) return;
+        ctx.drawImage(
+          img,
+          Math.round(layer.x),
+          Math.round(layer.y),
+          Math.max(1, Math.round(layer.width)),
+          Math.max(1, Math.round(layer.height))
+        );
+      } catch (e: any) {
+        logPreviewErrorOnce(
+          `preview-region-${layer.id}`,
+          `Failed to render selection overlay: ${e?.message || e}`
+        );
+      }
+    }
+
+    const mime = bgRemovalEnabled ? 'image/png' : 'image/jpeg';
+    resultSrc = canvas.toDataURL(mime, 0.92);
+  }
+
+  function scheduleCompositePreviewRender() {
+    const seq = ++compositeRenderSeq;
+    requestAnimationFrame(() => {
+      if (seq !== compositeRenderSeq) return;
+      void renderCompositePreview().catch((e: any) => {
+        logPreviewErrorOnce('preview-render-failed', `Composite preview rendering failed: ${e?.message || e}`);
+      });
+    });
   }
 
   function getPromptTemplate(useFullImageReference: boolean): string {
@@ -284,6 +505,17 @@
     return trimmed.startsWith('data:') ? trimmed : `data:image/png;base64,${trimmed}`;
   }
 
+  function ensureImageDataUrl(value: string, fallbackMime = 'image/png'): string {
+    const normalized = normalizeMergedImageSrc(value);
+    if (!normalized) return '';
+    if (normalized.startsWith('data:image/')) return normalized;
+    const marker = ';base64,';
+    const idx = normalized.indexOf(marker);
+    if (idx < 0) return normalized;
+    const payload = normalized.slice(idx + marker.length);
+    return `data:${fallbackMime};base64,${payload}`;
+  }
+
   type ParsedMergedImage = {
     mime: string;
     base64: string;
@@ -350,6 +582,12 @@
       return;
     }
 
+    if (parsed.dataUrl.startsWith('data:image/')) {
+      cleanupResultPreviewUrl();
+      resultPreviewSrc = parsed.dataUrl;
+      return;
+    }
+
     try {
       const blob = base64ToBlob(parsed.base64, parsed.mime);
       if (currentBuildId !== previewBuildId) return;
@@ -357,10 +595,11 @@
       cleanupResultPreviewUrl();
       resultPreviewObjectUrl = url;
       resultPreviewSrc = url;
-    } catch {
+    } catch (e: any) {
       if (currentBuildId !== previewBuildId) return;
       cleanupResultPreviewUrl();
       resultPreviewSrc = parsed.dataUrl;
+      logPreviewErrorOnce('preview-result-url-fallback', `Preview blob conversion failed; using data URL fallback: ${e?.message || e}`);
     }
   }
 
@@ -569,8 +808,206 @@
     isPanning = false;
     activePointerId = null;
   }
-  
-  $: if (rows && cols && overlapXRatio >= 0 && overlapYRatio >= 0 && imgElement) {
+
+  function resetSelectionBox() {
+    if (originalW <= 0 || originalH <= 0) return;
+    const ratio = boxGenerateAspectRatio;
+    if (ratio && ratio > 0) {
+      let targetW = originalW * 0.6;
+      let targetH = targetW / ratio;
+      if (targetH > originalH * 0.6) {
+        targetH = originalH * 0.6;
+        targetW = targetH * ratio;
+      }
+      if (targetW > originalW) {
+        targetW = originalW;
+        targetH = targetW / ratio;
+      }
+      if (targetH > originalH) {
+        targetH = originalH;
+        targetW = targetH * ratio;
+      }
+      boxW = Math.max(MIN_SELECTION_SIZE, Math.round(targetW));
+      boxH = Math.max(MIN_SELECTION_SIZE, Math.round(targetH));
+    } else {
+      boxW = Math.max(MIN_SELECTION_SIZE, Math.round(originalW * 0.6));
+      boxH = Math.max(MIN_SELECTION_SIZE, Math.round(originalH * 0.6));
+    }
+    boxX = Math.round((originalW - boxW) / 2);
+    boxY = Math.round((originalH - boxH) / 2);
+    hasEditedSelectionBox = false;
+  }
+
+  function toImagePoint(event: MouseEvent, overlay: HTMLElement) {
+    const rect = overlay.getBoundingClientRect();
+    const localX = Math.min(Math.max(0, event.clientX - rect.left), rect.width);
+    const localY = Math.min(Math.max(0, event.clientY - rect.top), rect.height);
+    return {
+      x: rect.width > 0 ? (localX / rect.width) * originalW : 0,
+      y: rect.height > 0 ? (localY / rect.height) * originalH : 0
+    };
+  }
+
+  function startSelectionDrag(event: MouseEvent, dragType: string) {
+    if (!boxGenerateMode || isSplitting || isMerging || isProcessing || isRegionProcessing) return;
+    const sourceEl = event.currentTarget as HTMLElement;
+    const overlay =
+      sourceEl.dataset.boxOverlay === '1'
+        ? sourceEl
+        : (sourceEl.closest('[data-box-overlay="1"]') as HTMLElement | null);
+    if (!overlay) return;
+    const point = toImagePoint(event, overlay);
+    isBoxDragging = true;
+    boxDragType = dragType;
+    boxStartPointerX = point.x;
+    boxStartPointerY = point.y;
+    boxStartX = boxX;
+    boxStartY = boxY;
+    boxStartW = boxW;
+    boxStartH = boxH;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function updateSelectionDrag(event: MouseEvent) {
+    if (!isBoxDragging) return;
+    const overlay = event.currentTarget as HTMLElement;
+    const point = toImagePoint(event, overlay);
+    const dx = point.x - boxStartPointerX;
+    const dy = point.y - boxStartPointerY;
+    const ratio = boxGenerateAspectRatio;
+
+    if (boxDragType === 'move') {
+      boxX = Math.round(Math.max(0, Math.min(originalW - boxW, boxStartX + dx)));
+      boxY = Math.round(Math.max(0, Math.min(originalH - boxH, boxStartY + dy)));
+      return;
+    }
+
+    if (boxDragType === 'new') {
+      let nextX = Math.min(boxStartPointerX, point.x);
+      let nextY = Math.min(boxStartPointerY, point.y);
+      let nextW = Math.max(MIN_SELECTION_SIZE, Math.abs(dx));
+      let nextH = Math.max(MIN_SELECTION_SIZE, Math.abs(dy));
+
+      if (ratio && ratio > 0) {
+        if (nextW / nextH > ratio) {
+          nextH = nextW / ratio;
+        } else {
+          nextW = nextH * ratio;
+        }
+        if (point.x < boxStartPointerX) {
+          nextX = boxStartPointerX - nextW;
+        }
+        if (point.y < boxStartPointerY) {
+          nextY = boxStartPointerY - nextH;
+        }
+      }
+
+      if (nextX < 0) nextX = 0;
+      if (nextY < 0) nextY = 0;
+      if (nextX + nextW > originalW) nextW = originalW - nextX;
+      if (nextY + nextH > originalH) nextH = originalH - nextY;
+
+      boxX = Math.round(nextX);
+      boxY = Math.round(nextY);
+      boxW = Math.round(Math.max(MIN_SELECTION_SIZE, nextW));
+      boxH = Math.round(Math.max(MIN_SELECTION_SIZE, nextH));
+      return;
+    }
+
+    let nextX = boxStartX;
+    let nextY = boxStartY;
+    let nextW = boxStartW;
+    let nextH = boxStartH;
+
+    if (boxDragType.includes('e')) {
+      nextW = Math.max(MIN_SELECTION_SIZE, boxStartW + dx);
+    }
+    if (boxDragType.includes('s')) {
+      nextH = Math.max(MIN_SELECTION_SIZE, boxStartH + dy);
+    }
+    if (boxDragType.includes('w')) {
+      nextW = Math.max(MIN_SELECTION_SIZE, boxStartW - dx);
+      nextX = boxStartX + boxStartW - nextW;
+    }
+    if (boxDragType.includes('n')) {
+      nextH = Math.max(MIN_SELECTION_SIZE, boxStartH - dy);
+      nextY = boxStartY + boxStartH - nextH;
+    }
+
+    if (ratio && ratio > 0) {
+      if (nextW / nextH > ratio) {
+        nextH = nextW / ratio;
+      } else {
+        nextW = nextH * ratio;
+      }
+      if (boxDragType.includes('w')) {
+        nextX = boxStartX + boxStartW - nextW;
+      }
+      if (boxDragType.includes('n')) {
+        nextY = boxStartY + boxStartH - nextH;
+      }
+    }
+
+    if (nextX < 0) {
+      nextX = 0;
+      if (ratio && ratio > 0) nextW = boxStartX + boxStartW;
+    }
+    if (nextY < 0) {
+      nextY = 0;
+      if (ratio && ratio > 0) nextH = boxStartY + boxStartH;
+    }
+    if (nextX + nextW > originalW) {
+      nextW = originalW - nextX;
+      if (ratio && ratio > 0) nextH = nextW / ratio;
+    }
+    if (nextY + nextH > originalH) {
+      nextH = originalH - nextY;
+      if (ratio && ratio > 0) nextW = nextH * ratio;
+    }
+
+    boxX = Math.round(nextX);
+    boxY = Math.round(nextY);
+    boxW = Math.round(Math.max(MIN_SELECTION_SIZE, nextW));
+    boxH = Math.round(Math.max(MIN_SELECTION_SIZE, nextH));
+  }
+
+  function stopSelectionDrag() {
+    if (isBoxDragging) {
+      hasEditedSelectionBox = true;
+    }
+    isBoxDragging = false;
+    boxDragType = '';
+  }
+
+  function cancelBoxGenerateMode() {
+    stopSelectionDrag();
+    dispatch('box_generate_mode_change', false);
+  }
+
+  function isTileIntersectingSelection(tile: any): boolean {
+    const x1 = tile.x;
+    const y1 = tile.y;
+    const x2 = tile.x + tile.w;
+    const y2 = tile.y + tile.h;
+    const bx1 = boxX;
+    const by1 = boxY;
+    const bx2 = boxX + boxW;
+    const by2 = boxY + boxH;
+    return x1 < bx2 && x2 > bx1 && y1 < by2 && y2 > by1;
+  }
+
+  $: if (
+    rows &&
+    cols &&
+    overlapXRatio >= 0 &&
+    overlapYRatio >= 0 &&
+    imgElement &&
+    !isProcessing &&
+    !isSplitting &&
+    !isMerging &&
+    !isRegionProcessing
+  ) {
     calculateGrid();
   }
 
@@ -594,16 +1031,24 @@
     const overlapW = tileW * overlapXRatio;
     const overlapH = tileH * overlapYRatio;
     
+    const previousByKey = new Map<string, any>();
+    for (const tile of tiles) {
+      previousByKey.set(`${tile.r},${tile.c}`, tile);
+    }
+
     tiles = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const x = c * (tileW - overlapW);
         const y = r * (tileH - overlapH);
+        const prev = previousByKey.get(`${r},${c}`);
         tiles.push({
           r, c, x, y, w: tileW, h: tileH,
-          status: 'pending',
+          status: prev?.status || 'pending',
           path: '',          // Target path for results
-          originalPath: ''   // Source path for input
+          originalPath: '',   // Source path for input
+          previewDataUrl: prev?.previewDataUrl || '',
+          renderOrder: prev?.renderOrder ?? (r * 1000 + c)
         });
       }
     }
@@ -643,11 +1088,13 @@
             if (operationMode === 'test_t2i') {
                 prompt = `Generate a beautiful scenery with a big, black text saying '(${tile.r},${tile.c})' in the center.`;
             } else {
-                if (!tile.originalPath) {
+                const splitTile = activeSplitTiles.find((t) => t.r === tile.r && t.c === tile.c);
+                const sourcePath = tile.originalPath || splitTile?.originalPath || '';
+                if (!sourcePath) {
                     throw new Error(`Original tile source missing for ${tile.r},${tile.c}. Please split again.`);
                 }
                 // Read via Rust to bypass scope restrictions
-                const b64Data = await invoke('load_image', { path: tile.originalPath }) as string;
+                const b64Data = await invoke('load_image', { path: sourcePath }) as string;
                 const res = await fetch(b64Data);
                 inputBlob = await res.blob();
                 fullImageBlob = useFullImageReference ? await getFullImageBlob() : null;
@@ -674,7 +1121,34 @@
              reader.onloadend = () => resolve(reader.result as string);
         });
         
-        await invoke('save_image_resized', { path: tile.path, base64Data: resultB64, width: Math.round(tile.w), height: Math.round(tile.h) });
+        const splitTile = activeSplitTiles.find((t) => t.r === tile.r && t.c === tile.c);
+        const outputPath = tile.path || splitTile?.path || '';
+        if (!outputPath) {
+          throw new Error(`Tile output path missing for ${tile.r},${tile.c}.`);
+        }
+        await invoke('save_image_resized', {
+          path: outputPath,
+          base64Data: resultB64,
+          width: Math.round(tile.w),
+          height: Math.round(tile.h)
+        });
+        if (!tile.path) {
+          tile.path = outputPath;
+        }
+        try {
+          const refreshedPreview = (await invoke('load_image', { path: outputPath })) as string;
+          tile.previewDataUrl = ensureImageDataUrl(
+            refreshedPreview,
+            bgRemovalEnabled ? 'image/png' : 'image/jpeg'
+          );
+        } catch (previewLoadErr: any) {
+          tile.previewDataUrl = ensureImageDataUrl(resultB64, bgRemovalEnabled ? 'image/png' : 'image/jpeg');
+          dispatch('log', {
+            type: 'error',
+            message: `Tile preview load fallback for ${tile.r},${tile.c}: ${previewLoadErr?.message || previewLoadErr}`
+          });
+        }
+        tile.renderOrder = Date.now();
         
         tiles[index].status = 'done';
         dispatch('log', { type: 'success', message: `Tile ${tile.r},${tile.c} processed.` });
@@ -684,49 +1158,67 @@
         dispatch('log', { type: 'error', message: `Tile ${tile.r},${tile.c}: ${e.message || e}` });
     } finally {
         tiles = [...tiles];
+        scheduleCompositePreviewRender();
     }
   }
 
-  async function mergeAll() {
-      const updatePayload = tiles
-        .filter((t: any) => !!t.path)
-        .map((t: any) => ({
-        r: t.r,
-        c: t.c,
-        path: t.path
-      }));
+  async function seedTilesFromMergedResult() {
+      const parsed = parseMergedImage(resultSrc);
+      if (!parsed) return;
+      const seedTiles = tiles
+        .filter((tile) => !!tile.path)
+        .map((tile) => ({
+          path: tile.path,
+          x: Math.round(tile.x),
+          y: Math.round(tile.y),
+          width: Math.max(1, Math.round(tile.w)),
+          height: Math.max(1, Math.round(tile.h))
+        }));
+      if (seedTiles.length === 0) return;
 
-      if (updatePayload.length === 0) {
-        throw new Error('No generated tile paths available to merge.');
-      }
-      
-      dispatch('log', { type: 'info', message: 'Merging tiles...' });
-      isMerging = true;
       try {
-        const mergedB64: string = await invoke('merge_img', {
-            tiles: updatePayload,
-            originalW: Math.round(originalW),
-            originalH: Math.round(originalH),
-            overlapRatioX: overlapXRatio,
-            overlapRatioY: overlapYRatio,
-            keyColor: bgRemovalEnabled ? keyColor : 'white',
-            removeBg: bgRemovalEnabled,
-            tolerance: tolerance
+        const seededCount = await invoke('seed_tile_outputs_from_base64', {
+          base64Data: parsed.dataUrl,
+          tiles: seedTiles
         });
-        
-        resultSrc = normalizeMergedImageSrc(mergedB64);
-        dispatch('log', { type: 'success', message: 'Processing complete.' });
-      } finally {
-        isMerging = false;
+        if ((seededCount as number) > 0) {
+          dispatch('log', {
+            type: 'info',
+            message: `Reused ${seededCount} previous tile results for current grid.`
+          });
+        }
+      } catch (e: any) {
+        dispatch('log', {
+          type: 'error',
+          message: `Failed to reuse previous merged result: ${e?.message || e}`
+        });
       }
+  }
+
+  async function runTileQueue(queue: number[], shouldStopWhenProcessingOff: boolean) {
+      const pending = [...queue];
+      const workerCount = Math.max(1, concurrency);
+      const workers = Array(workerCount).fill(null).map(async () => {
+          while (pending.length > 0) {
+              const index = pending.shift();
+              if (index === undefined) continue;
+              if (shouldStopWhenProcessingOff && !isProcessing) break;
+              await processSingleTile(index);
+          }
+      });
+      await Promise.all(workers);
   }
 
   async function splitImageAndAssignPaths() {
       dispatch('log', { type: 'info', message: 'Splitting image into tiles...' });
       isSplitting = true;
       try {
+        const sourcePath = (effectiveSrc || src || '').trim();
+        if (!sourcePath) {
+            throw new Error('No source image path available for splitting.');
+        }
         const splitRes: any = await invoke('split_img', {
-          path: src,
+          path: sourcePath,
           rows,
           cols,
           overlapRatioX: overlapXRatio,
@@ -736,9 +1228,16 @@
         });
         
         tempDir = splitRes.temp_dir;
+        if (Number.isFinite(splitRes.original_width)) {
+          originalW = Math.max(1, Number(splitRes.original_width));
+        }
+        if (Number.isFinite(splitRes.original_height)) {
+          originalH = Math.max(1, Number(splitRes.original_height));
+        }
         
         // If the source image was in a temp dir that was just replaced, update the source
-        if (splitRes.new_input_path && splitRes.new_input_path !== src) {
+        if (splitRes.new_input_path && splitRes.new_input_path !== effectiveSrc) {
+            effectiveSrc = splitRes.new_input_path;
             dispatch('update_src', splitRes.new_input_path);
         }
 
@@ -746,6 +1245,12 @@
         for (const resTile of splitRes.tiles) {
             tileMap.set(`${resTile.r},${resTile.c}`, resTile);
         }
+        activeSplitTiles = splitRes.tiles.map((resTile: any) => ({
+          r: resTile.r,
+          c: resTile.c,
+          path: resTile.path,
+          originalPath: resTile.original_path
+        }));
 
         for (const tile of tiles) {
             const mapped = tileMap.get(`${tile.r},${tile.c}`);
@@ -756,11 +1261,21 @@
                 tile.h = mapped.height;
                 tile.path = mapped.path;
                 tile.originalPath = mapped.original_path;
+                tile.previewDataUrl = tile.previewDataUrl || '';
             } else {
                 tile.path = '';
                 tile.originalPath = '';
+                tile.previewDataUrl = '';
             }
         }
+        await seedTilesFromMergedResult();
+        if (resultSrc) {
+          await buildTilePreviewsFromComposite(resultSrc);
+          // The latest composite is now baked into tile previews.
+          // Keep a single visual source and avoid drawing stale overlays twice.
+          regionOverlays = [];
+        }
+        scheduleCompositePreviewRender();
         dispatch('log', { type: 'success', message: 'Image split successfully.' });
         return splitRes;
       } finally {
@@ -774,27 +1289,24 @@
       tiles = [...tiles]; 
       
       // Process with concurrency limit
-      const queue = tiles
+      let queue = tiles
         .map((tile, index) => (tile.path && tile.originalPath ? index : -1))
         .filter((index) => index >= 0);
+      if (queue.length === 0 && activeSplitTiles.length > 0) {
+        const indexByKey = new Map<string, number>();
+        tiles.forEach((tile, index) => indexByKey.set(`${tile.r},${tile.c}`, index));
+        queue = activeSplitTiles
+          .map((tile) => indexByKey.get(`${tile.r},${tile.c}`))
+          .filter((index): index is number => index !== undefined);
+      }
       if (queue.length === 0) {
         throw new Error('No valid tiles were prepared. Please adjust overlap/grid settings.');
       }
-      
-      const workers = Array(concurrency).fill(null).map(async () => {
-          while (queue.length > 0) {
-              const index = queue.shift();
-              if (index !== undefined) {
-                  if (!isProcessing) break;
-                  await processSingleTile(index);
-              }
-          }
-      });
-      
-      await Promise.all(workers);
+      await runTileQueue(queue, true);
       
       if (isProcessing) {
-         await mergeAll();
+         scheduleCompositePreviewRender();
+         dispatch('log', { type: 'success', message: 'Processing complete.' });
       }
       
     } catch (e: any) {
@@ -825,7 +1337,166 @@
         }
     }
     await processSingleTile(index);
-    await mergeAll();
+    scheduleCompositePreviewRender();
+  }
+
+  async function generateSelectionTiles() {
+    if (!boxGenerateMode) return;
+    if (isProcessing || isSplitting || isMerging || isRegionProcessing) return;
+
+    try {
+      isRegionProcessing = true;
+      if (!hasEditedSelectionBox) {
+        throw new Error('Please draw or adjust the selection box before generating.');
+      }
+      await splitImageAndAssignPaths();
+      tiles = [...tiles];
+
+      const selectedIndices = tiles
+        .map((tile, index) => {
+          const splitTile = activeSplitTiles.find((t) => t.r === tile.r && t.c === tile.c);
+          const hasOutput = !!(tile.path || splitTile?.path);
+          const hasInput = !!(tile.originalPath || splitTile?.originalPath);
+          if (!hasOutput || !hasInput) return -1;
+          return isTileIntersectingSelection(tile) ? index : -1;
+        })
+        .filter((index) => index >= 0);
+
+      if (selectedIndices.length === 0) {
+        throw new Error('No tiles overlap with the selected box.');
+      }
+      const selectedCount = selectedIndices.length;
+      const region = {
+        x: Math.round(boxX),
+        y: Math.round(boxY),
+        width: Math.max(1, Math.round(boxW)),
+        height: Math.max(1, Math.round(boxH))
+      };
+
+      dispatch('log', {
+        type: 'info',
+        message: `Generating one continuous region for ${selectedCount} tiles...`
+      });
+
+      const operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
+      let resultBlob: Blob;
+
+      if (operationMode === 'mock') {
+        resultBlob = await generateMockTile(region.width, region.height, 0, 0);
+      } else {
+        const apiKey = localStorage.getItem('gemini_api_key');
+        const model = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
+        const apiBaseUrl = getApiBaseUrl();
+        if (!apiKey) throw new Error("API Key not found. Please set it in Settings.");
+
+        let prompt = buildPromptForTile({
+          r: 0,
+          c: 0,
+          w: region.width,
+          h: region.height
+        });
+        prompt += `\nGenerate only the selected box region (${region.width}x${region.height}) from the input image.`;
+
+        const useFullImageReference = isFullImageReferenceEnabled();
+        const sourcePath = (effectiveSrc || src || '').trim();
+        if (!sourcePath) throw new Error('No source image available.');
+        const regionDataUrl = (await invoke('load_image_region', {
+          path: sourcePath,
+          x: region.x,
+          y: region.y,
+          width: region.width,
+          height: region.height,
+          // Keep region input JPEG for model compatibility.
+          preferJpeg: true
+        })) as string;
+        const regionResponse = await fetch(regionDataUrl);
+        if (!regionResponse.ok) {
+          throw new Error(`Failed to read region image (${regionResponse.status})`);
+        }
+        const croppedBlob = await regionResponse.blob();
+
+        if (isVerboseLoggingEnabled()) {
+          dispatch('log', {
+            type: 'info',
+            message: `[Prompt box ${region.x},${region.y},${region.width},${region.height}] ${prompt.replace(/\n/g, '\\n')}`
+          });
+        }
+
+        resultBlob = await generateImage(croppedBlob, prompt, model, apiKey, {
+          apiBaseUrl,
+          fullImageBlob: useFullImageReference ? await getFullImageBlob() : null
+        });
+      }
+
+      const reader = new FileReader();
+      reader.readAsDataURL(resultBlob);
+      const resultB64Raw = await new Promise<string>((resolve) => {
+        reader.onloadend = () => resolve(reader.result as string);
+      });
+      const resultB64 = ensureImageDataUrl(
+        resultB64Raw,
+        bgRemovalEnabled ? 'image/png' : 'image/jpeg'
+      );
+
+      for (const index of selectedIndices) {
+        const tile = tiles[index];
+        const splitTile = activeSplitTiles.find((t) => t.r === tile.r && t.c === tile.c);
+        const outputPath = tile.path || splitTile?.path || '';
+        if (!outputPath) continue;
+        await invoke('save_image_region_blend', {
+          path: outputPath,
+          base64Data: resultB64,
+          tileWidth: Math.max(1, Math.round(tile.w)),
+          tileHeight: Math.max(1, Math.round(tile.h)),
+          tileX: Math.round(tile.x),
+          tileY: Math.round(tile.y),
+          regionX: region.x,
+          regionY: region.y,
+          regionWidth: region.width,
+          regionHeight: region.height,
+          fallbackPath: tile.originalPath || splitTile?.originalPath || ''
+        });
+        try {
+          const refreshedPreview = (await invoke('load_image', { path: outputPath })) as string;
+          tile.previewDataUrl = ensureImageDataUrl(
+            refreshedPreview,
+            bgRemovalEnabled ? 'image/png' : 'image/jpeg'
+          );
+        } catch (e: any) {
+          dispatch('log', {
+            type: 'error',
+            message: `Failed to refresh tile preview ${tile.r},${tile.c}: ${e?.message || e}`
+          });
+        }
+        tile.renderOrder = Date.now() + index;
+        tile.status = 'done';
+      }
+
+      regionOverlays = [
+        ...regionOverlays,
+        {
+          id: Date.now(),
+          x: region.x,
+          y: region.y,
+          width: region.width,
+          height: region.height,
+          dataUrl: resultB64
+        }
+      ];
+      scheduleCompositePreviewRender();
+      dispatch('log', {
+        type: 'success',
+        message: `Selection-box generation complete (${selectedCount} tiles).`
+      });
+      cancelBoxGenerateMode();
+    } catch (e: any) {
+      dispatch('log', {
+        type: 'error',
+        message: `Selection-box generation failed: ${e?.message || e}`
+      });
+    } finally {
+      isRegionProcessing = false;
+    }
   }
 
   onDestroy(() => {
@@ -907,11 +1578,56 @@
                </span>
              </div>
            {/if}
+
+           {#if boxGenerateMode}
+             <!-- svelte-ignore a11y_no_static_element_interactions -->
+             <div
+               class="absolute inset-0 z-40"
+               data-box-overlay="1"
+               on:mousedown={(e) => startSelectionDrag(e, 'new')}
+               on:mousemove={updateSelectionDrag}
+               on:mouseup={stopSelectionDrag}
+               on:mouseleave={stopSelectionDrag}
+             >
+               <div class="absolute inset-0 bg-blue-900/10 border border-blue-400/25 pointer-events-none"></div>
+               <!-- svelte-ignore a11y_no_static_element_interactions -->
+               <div
+                 class="absolute border-2 border-blue-400 bg-blue-500/10 shadow-[0_0_0_9999px_rgba(15,23,42,0.28)]"
+                 style="left: {boxX / originalW * 100}%; top: {boxY / originalH * 100}%; width: {boxW / originalW * 100}%; height: {boxH / originalH * 100}%;"
+                 on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'move')}
+               >
+                 <div class="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/70 text-white text-[10px] px-2 py-0.5 rounded pointer-events-none whitespace-nowrap font-mono">
+                   {Math.round(boxW)} x {Math.round(boxH)}
+                 </div>
+                 <div class="absolute -left-1.5 -top-1.5 w-3 h-3 bg-white border border-blue-600 cursor-nw-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'nw')}></div>
+                 <div class="absolute -right-1.5 -top-1.5 w-3 h-3 bg-white border border-blue-600 cursor-ne-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'ne')}></div>
+                 <div class="absolute -left-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-sw-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'sw')}></div>
+                 <div class="absolute -right-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-se-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'se')}></div>
+               </div>
+               <div class="absolute right-4 bottom-4 flex items-center gap-2">
+                 <button
+                   on:mousedown|stopPropagation
+                   on:click|stopPropagation={cancelBoxGenerateMode}
+                   class="px-3 py-1.5 rounded-md bg-black/65 hover:bg-black/75 text-white text-xs font-semibold border border-white/20 shadow"
+                 >
+                   {$t('settings.cancel')}
+                 </button>
+                 <button
+                   on:mousedown|stopPropagation
+                   on:click|stopPropagation={generateSelectionTiles}
+                   disabled={isSplitting || isMerging || isProcessing || isRegionProcessing}
+                   class="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold shadow"
+                 >
+                   {$t('generateInBox')}
+                 </button>
+               </div>
+             </div>
+           {/if}
            
            {#each tiles as tile, index}
              <!-- svelte-ignore a11y_no_static_element_interactions -->
              <div 
-               class="absolute group transition-all duration-200 border flex items-center justify-center cursor-default overflow-hidden {hoveredTileIndex === index ? 'border-blue-400 bg-blue-500/30' : 'border-transparent hover:border-blue-400 hover:bg-blue-500/30'}"
+               class="absolute group transition-all duration-200 border flex items-center justify-center cursor-default overflow-hidden {boxGenerateMode ? 'pointer-events-none' : ''} {hoveredTileIndex === index ? 'border-blue-400 bg-blue-500/30' : 'border-transparent hover:border-blue-400 hover:bg-blue-500/30'}"
                style="left: {tile.x / originalW * 100}%; top: {tile.y / originalH * 100}%; width: {tile.w / originalW * 100}%; height: {tile.h / originalH * 100}%;"
                on:mouseenter={() => hoveredTileIndex = index}
                on:mouseleave={() => hoveredTileIndex = hoveredTileIndex === index ? null : hoveredTileIndex}
@@ -935,11 +1651,11 @@
                     </div>
                   {/if}
 
-                  {#if hoveredTileIndex === index}
+                  {#if hoveredTileIndex === index && !boxGenerateMode}
                   <button 
                     on:click|stopPropagation={() => regenerateTile(index)}
                     class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transition-all duration-150 ease-out z-40 cursor-pointer disabled:cursor-not-allowed"
-                    disabled={isSplitting || isMerging || isProcessing}
+                    disabled={isSplitting || isMerging || isProcessing || isRegionProcessing}
                   >
                     {tile.status === 'pending' ? $t('generate') : $t('regenerate')}
                   </button>

@@ -59,6 +59,18 @@
   let nonBgCustomHex = normalizeHexColor(localStorage.getItem('non_bg_custom_hex') || '#FFFFFF');
   let nonBgBackgroundHex = resolveNonBgHex(nonBgColorMode, nonBgCustomHex);
   let showOriginalInput = false;
+  let boxGenerateMode = false;
+  let boxAspectMode = '1:1';
+  let boxGenerateAspectRatio: number | null = 1;
+  const boxAspectOptions = [
+    { label: 'Free', value: 'free' },
+    { label: '1:1', value: '1:1' },
+    { label: '4:3', value: '4:3' },
+    { label: '16:9', value: '16:9' },
+    { label: '3:2', value: '3:2' },
+    { label: '3:4', value: '3:4' },
+    { label: '9:16', value: '9:16' }
+  ];
   
   onMount(() => {
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
@@ -143,6 +155,15 @@
   let isProcessing = false;
   let resultSrc = '';
   let exportTiles: any[] = [];
+  let exportAlertVisible = false;
+  let exportProgress = 0;
+  let exportMessage = '';
+  let exportError = '';
+  let exportDone = false;
+  let exportDirPath = '';
+  let exportMergedPath = '';
+  let showFolderNameModal = false;
+  let exportFolderNameInput = '';
   
   // Image Info
   let imgWidth = 0;
@@ -162,6 +183,7 @@
   function clearInput() {
     imagePath = '';
     resultSrc = '';
+    boxGenerateMode = false;
     detectedSubject = '';
     manualSubject = '';
     userEditedSubject = false;
@@ -242,6 +264,7 @@
   function handleImageSelected(path: string) {
     imagePath = path;
     resultSrc = '';
+    boxGenerateMode = false;
     manualSubject = '';
     userEditedSubject = false;
     startSubjectDetection(path);
@@ -267,6 +290,7 @@
      });
      imagePath = newPath;
      resultSrc = '';
+     boxGenerateMode = false;
      manualSubject = '';
      userEditedSubject = false;
      startSubjectDetection(newPath);
@@ -283,11 +307,43 @@
     userEditedSubject = false;
   }
 
+  function handleTileGridSourceUpdate(e: CustomEvent<string>) {
+    const nextPath = (e.detail || '').trim();
+    if (!nextPath || nextPath === imagePath) return;
+    imagePath = nextPath;
+  }
+
+  function handleBoxGenerateModeChange(e: CustomEvent<boolean>) {
+    boxGenerateMode = Boolean(e.detail);
+  }
+
+  function toggleBoxGenerateMode() {
+    boxGenerateMode = !boxGenerateMode;
+  }
+
   function addLog(e: any) {
     logs = [{ ...e.detail, time: new Date().toLocaleTimeString() }, ...logs].slice(0, 100);
   }
 
-  async function saveResult() {
+  function updateExportAlert(progress: number, message: string) {
+    exportProgress = Math.max(0, Math.min(100, Math.round(progress)));
+    exportMessage = message;
+  }
+
+  function closeExportAlert() {
+    exportAlertVisible = false;
+  }
+
+  async function openExportDirectory() {
+    if (!exportDirPath) return;
+    try {
+      await invoke('open_path', { path: exportDirPath });
+    } catch (e) {
+      console.error('Failed to open export directory:', e);
+    }
+  }
+
+  async function runExportWithFolderName(folderName: string) {
     if (!resultSrc) return;
 
     const selected = await open({
@@ -297,47 +353,89 @@
     });
     const exportParentDir = Array.isArray(selected) ? selected[0] : selected;
     if (typeof exportParentDir === 'string' && exportParentDir.length > 0) {
+      exportAlertVisible = true;
+      exportDone = false;
+      exportError = '';
+      exportDirPath = '';
+      exportMergedPath = '';
+      updateExportAlert(10, String($t('exporting')));
+
       const localizedSuffix = String($t('bgRemovedSuffix'));
 
-      if (exportTiles.length > 0) {
-        const verboseLogging = localStorage.getItem('verbose_logging') === 'true';
-        const exportRes: any = await invoke('save_export_bundle', {
-          outputDir: exportParentDir,
-          mergedBase64: resultSrc,
-          tiles: exportTiles,
-          sourcePath: imagePath,
-          inputName: originalFilename || 'image',
-          removeBg: bgRemovalEnabled,
-          localizedSuffix,
-          verboseLogging
-        });
-        if (verboseLogging && Array.isArray(exportRes?.psd_logs) && exportRes.psd_logs.length > 0) {
-          const extraLogs = exportRes.psd_logs.map((message: string) => ({
-            type: 'info',
-            message,
+      try {
+        if (exportTiles.length > 0) {
+          updateExportAlert(35, String($t('exporting')));
+          const verboseLogging = localStorage.getItem('verbose_logging') === 'true';
+          const exportRes: any = await invoke('save_export_bundle', {
+            outputDir: exportParentDir,
+            mergedBase64: resultSrc,
+            tiles: exportTiles,
+            sourcePath: imagePath,
+            inputName: originalFilename || 'image',
+            folderName,
+            removeBg: bgRemovalEnabled,
+            localizedSuffix,
+            verboseLogging
+          });
+          if (verboseLogging && Array.isArray(exportRes?.psd_logs) && exportRes.psd_logs.length > 0) {
+            const extraLogs = exportRes.psd_logs.map((message: string) => ({
+              type: 'info',
+              message,
+              time: new Date().toLocaleTimeString()
+            }));
+            logs = [...extraLogs.reverse(), ...logs];
+          }
+          logs = [{
+            type: 'success',
+            message: `Saved export bundle (${exportRes.tile_count} tiles): ${exportRes.export_dir}`,
             time: new Date().toLocaleTimeString()
-          }));
-          logs = [...extraLogs.reverse(), ...logs];
+          }, ...logs];
+          exportDirPath = exportRes.export_dir || '';
+          exportMergedPath = exportRes.merged_path || '';
+        } else {
+          updateExportAlert(35, String($t('exporting')));
+          const ext = bgRemovalEnabled ? 'png' : 'jpg';
+          const stem = originalFilename
+            ? `${originalFilename}_${localizedSuffix}`
+            : `upscaled_${localizedSuffix}`;
+          const mergedPath = `${exportParentDir}/${stem}.${ext}`;
+          await invoke('save_merged_image', { path: mergedPath, base64Data: resultSrc });
+          logs = [{
+            type: 'success',
+            message: `Image saved to ${mergedPath}`,
+            time: new Date().toLocaleTimeString()
+          }, ...logs];
+          exportDirPath = exportParentDir;
+          exportMergedPath = mergedPath;
         }
+        updateExportAlert(100, String($t('exportComplete')));
+        exportDone = true;
+      } catch (e: any) {
+        exportError = e?.message || String(e);
+        updateExportAlert(100, String($t('exportProgressTitle')));
         logs = [{
-          type: 'success',
-          message: `Saved export bundle (${exportRes.tile_count} tiles): ${exportRes.export_dir}`,
-          time: new Date().toLocaleTimeString()
-        }, ...logs];
-      } else {
-        const ext = bgRemovalEnabled ? 'png' : 'jpg';
-        const stem = originalFilename
-          ? `${originalFilename}_${localizedSuffix}`
-          : `upscaled_${localizedSuffix}`;
-        const mergedPath = `${exportParentDir}/${stem}.${ext}`;
-        await invoke('save_merged_image', { path: mergedPath, base64Data: resultSrc });
-        logs = [{
-          type: 'success',
-          message: `Image saved to ${mergedPath}`,
+          type: 'error',
+          message: `Export failed: ${exportError}`,
           time: new Date().toLocaleTimeString()
         }, ...logs];
       }
     }
+  }
+
+  async function saveResult() {
+    if (!resultSrc) return;
+    exportFolderNameInput = (originalFilename || 'image').trim() || 'image';
+    showFolderNameModal = true;
+  }
+
+  function cancelFolderNameModal() {
+    showFolderNameModal = false;
+  }
+
+  async function confirmFolderNameModal() {
+    const folderName = (exportFolderNameInput || '').trim() || (originalFilename || 'image');
+    showFolderNameModal = false;
+    await runExportWithFolderName(folderName);
   }
 
   function clampInt(value: number, min: number, max: number): number {
@@ -428,6 +526,19 @@
         console.error('Subject detection failed:', e);
       }
     })();
+  }
+
+  $: {
+    if (boxAspectMode === 'free') {
+      boxGenerateAspectRatio = null;
+    } else {
+      const [w, h] = boxAspectMode.split(':').map((v) => parseFloat(v));
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        boxGenerateAspectRatio = w / h;
+      } else {
+        boxGenerateAspectRatio = 1;
+      }
+    }
   }
 </script>
 
@@ -761,14 +872,45 @@
           {showTileLines}
           {isAdjustingGrid}
           {showOriginalInput}
+          {boxGenerateMode}
+          boxGenerateAspectRatio={boxGenerateAspectRatio}
           detectedSubject={promptSubject}
           bind:isProcessing 
           bind:resultSrc
           bind:exportTiles
+          on:update_src={handleTileGridSourceUpdate}
+          on:box_generate_mode_change={handleBoxGenerateModeChange}
           on:log={addLog}
         />
 
         <div class="absolute top-4 right-4 z-50 flex items-center gap-2 pointer-events-auto">
+          {#if boxGenerateMode}
+            <select
+              bind:value={boxAspectMode}
+              class="h-11 px-3 rounded-full shadow-xl border border-gray-200 dark:border-gray-600 bg-white/85 dark:bg-gray-800/85 text-sm text-gray-900 dark:text-white backdrop-blur-sm"
+              title={$t('boxAspectRatio')}
+              aria-label={$t('boxAspectRatio')}
+            >
+              {#each boxAspectOptions as option}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          {/if}
+
+          <button
+            type="button"
+            on:click={toggleBoxGenerateMode}
+            class="p-3 rounded-full shadow-xl border backdrop-blur-sm transition-all active:scale-90 select-none {boxGenerateMode ? 'bg-blue-600 text-white border-blue-500 hover:bg-blue-500' : 'bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 text-gray-900 dark:text-white border-gray-200 dark:border-gray-600'}"
+            title={$t('generateInBox')}
+            aria-label={$t('generateInBox')}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+              <path d="M8 12h8"></path>
+              <path d="M12 8v8"></path>
+            </svg>
+          </button>
+
           <button
             type="button"
             on:click={() => showTileLines = !showTileLines}
@@ -807,6 +949,85 @@
 
   {#if showCropModal}
     <CropModal src={imagePath} on:cancel={() => showCropModal = false} on:done={handleCropDone} />
+  {/if}
+
+  {#if showFolderNameModal}
+    <div class="fixed inset-0 z-[120] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-md rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl p-4 flex flex-col gap-3">
+        <h3 class="font-semibold text-sm text-gray-900 dark:text-white">{$t('outputFolderNamePrompt')}</h3>
+        <input
+          type="text"
+          bind:value={exportFolderNameInput}
+          class="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white px-3 py-2 text-sm"
+          placeholder="image"
+        />
+        <div class="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            on:click={cancelFolderNameModal}
+            class="px-3 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-xs"
+          >
+            {$t('settings.cancel')}
+          </button>
+          <button
+            type="button"
+            on:click={confirmFolderNameModal}
+            class="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+          >
+            {$t('save')}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if exportAlertVisible}
+    <div class="fixed inset-0 z-[120] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-lg rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl p-4 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <h3 class="font-semibold text-sm text-gray-900 dark:text-white">{$t('exportProgressTitle')}</h3>
+          <button
+            type="button"
+            on:click={closeExportAlert}
+            class="text-xs px-2 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"
+          >
+            {$t('settings.cancel')}
+          </button>
+        </div>
+        <div class="w-full h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden">
+          <div
+            class="h-full bg-blue-600 transition-all duration-300"
+            style="width: {exportProgress}%"
+          ></div>
+        </div>
+        <div class="text-xs text-gray-600 dark:text-gray-300">{exportMessage}</div>
+
+        {#if exportError}
+          <div class="text-xs text-red-600 dark:text-red-400">{exportError}</div>
+        {/if}
+
+        {#if exportDone && !exportError}
+          <div class="text-xs text-green-600 dark:text-green-400">{$t('exportComplete')}</div>
+          <div class="text-xs text-gray-700 dark:text-gray-200 break-all">{exportMergedPath || exportDirPath}</div>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              on:click={openExportDirectory}
+              class="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+            >
+              {$t('openFolder')}
+            </button>
+            <button
+              type="button"
+              on:click={closeExportAlert}
+              class="px-3 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-xs"
+            >
+              {$t('settings.save')}
+            </button>
+          </div>
+        {/if}
+      </div>
+    </div>
   {/if}
 </main>
 

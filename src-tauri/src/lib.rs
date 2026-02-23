@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
+use image::imageops::{crop_imm, FilterType as ResizeFilterType};
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType as PngFilterType, PngEncoder};
 use image::{ColorType, DynamicImage, ImageEncoder, RgbaImage};
@@ -68,6 +69,95 @@ fn save_image_resized(
 }
 
 #[tauri::command]
+fn load_image_region(
+    path: String,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    prefer_jpeg: bool,
+) -> Result<String, String> {
+    image_processing::load_image_region_data_url(&path, x, y, width, height, prefer_jpeg)
+}
+
+#[tauri::command]
+fn save_image_region_blend(
+    path: String,
+    base64_data: String,
+    tile_width: u32,
+    tile_height: u32,
+    tile_x: u32,
+    tile_y: u32,
+    region_x: u32,
+    region_y: u32,
+    region_width: u32,
+    region_height: u32,
+    fallback_path: Option<String>,
+) -> Result<(), String> {
+    if tile_width == 0 || tile_height == 0 || region_width == 0 || region_height == 0 {
+        return Ok(());
+    }
+
+    let data_str = base64_data.split(',').last().unwrap_or(&base64_data);
+    let data = general_purpose::STANDARD
+        .decode(data_str)
+        .map_err(|e| e.to_string())?;
+    let generated = image::load_from_memory(&data)
+        .map_err(|e| e.to_string())?
+        .resize_exact(region_width, region_height, ResizeFilterType::Lanczos3)
+        .to_rgba8();
+
+    let mut base = if Path::new(&path).is_file() {
+        image::open(&path)
+            .map_err(|e| e.to_string())?
+            .resize_exact(tile_width, tile_height, ResizeFilterType::Lanczos3)
+            .to_rgba8()
+    } else if let Some(fallback) = fallback_path
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        if Path::new(&fallback).is_file() {
+            image::open(&fallback)
+                .map_err(|e| e.to_string())?
+                .resize_exact(tile_width, tile_height, ResizeFilterType::Lanczos3)
+                .to_rgba8()
+        } else {
+            RgbaImage::new(tile_width, tile_height)
+        }
+    } else {
+        RgbaImage::new(tile_width, tile_height)
+    };
+
+    let region_x2 = region_x.saturating_add(region_width);
+    let region_y2 = region_y.saturating_add(region_height);
+
+    let tile_x2 = tile_x.saturating_add(tile_width);
+    let tile_y2 = tile_y.saturating_add(tile_height);
+
+    let overlap_x1 = tile_x.max(region_x);
+    let overlap_y1 = tile_y.max(region_y);
+    let overlap_x2 = tile_x2.min(region_x2);
+    let overlap_y2 = tile_y2.min(region_y2);
+
+    if overlap_x1 >= overlap_x2 || overlap_y1 >= overlap_y2 {
+        return image_processing::save_rgba_image_auto(&path, &base);
+    }
+
+    for gy in overlap_y1..overlap_y2 {
+        let local_y = gy - tile_y;
+        for gx in overlap_x1..overlap_x2 {
+            let local_x = gx - tile_x;
+            let region_local_x = gx - region_x;
+            let region_local_y = gy - region_y;
+            let px = generated.get_pixel(region_local_x, region_local_y);
+            base.put_pixel(local_x, local_y, *px);
+        }
+    }
+
+    image_processing::save_rgba_image_auto(&path, &base)
+}
+
+#[tauri::command]
 async fn split_img(
     state: tauri::State<'_, AppState>,
     path: String,
@@ -121,6 +211,16 @@ struct TileUpdate {
     r: u32,
     c: u32,
     path: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SeedTile {
+    path: String,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -454,6 +554,52 @@ async fn merge_img(
 }
 
 #[tauri::command]
+fn seed_tile_outputs_from_base64(base64_data: String, tiles: Vec<SeedTile>) -> Result<u32, String> {
+    if tiles.is_empty() {
+        return Ok(0);
+    }
+
+    let raw = decode_data_url(&base64_data)?;
+    let base_image = image::load_from_memory(&raw)
+        .map_err(|e| format!("Failed to decode seed image: {}", e))?
+        .to_rgba8();
+    let (base_w, base_h) = base_image.dimensions();
+    if base_w == 0 || base_h == 0 {
+        return Err("Seed image has invalid dimensions".to_string());
+    }
+
+    let mut seeded_count = 0u32;
+    for tile in tiles {
+        let path = tile.path.trim();
+        if path.is_empty() {
+            continue;
+        }
+
+        let start_x = tile.x.min(base_w.saturating_sub(1));
+        let start_y = tile.y.min(base_h.saturating_sub(1));
+        let mut crop_w = tile.width.min(base_w.saturating_sub(start_x));
+        let mut crop_h = tile.height.min(base_h.saturating_sub(start_y));
+        if crop_w == 0 || crop_h == 0 {
+            continue;
+        }
+
+        let mut cropped = crop_imm(&base_image, start_x, start_y, crop_w, crop_h).to_image();
+        if cropped.width() != tile.width || cropped.height() != tile.height {
+            crop_w = tile.width.max(1);
+            crop_h = tile.height.max(1);
+            cropped = DynamicImage::ImageRgba8(cropped)
+                .resize_exact(crop_w, crop_h, ResizeFilterType::Lanczos3)
+                .to_rgba8();
+        }
+
+        image_processing::save_rgba_image_auto(path, &cropped)?;
+        seeded_count += 1;
+    }
+
+    Ok(seeded_count)
+}
+
+#[tauri::command]
 fn crop_img(
     state: tauri::State<AppState>,
     path: String,
@@ -492,6 +638,7 @@ fn save_export_bundle(
     tiles: Vec<ExportTile>,
     source_path: Option<String>,
     input_name: Option<String>,
+    folder_name: Option<String>,
     remove_bg: bool,
     localized_suffix: Option<String>,
     verbose_logging: bool,
@@ -509,8 +656,14 @@ fn save_export_bundle(
     let export_parent = PathBuf::from(output_dir);
     fs::create_dir_all(&export_parent).map_err(|e| e.to_string())?;
 
-    let folder_name = sanitize_path_component(input_name.as_deref().unwrap_or("image"));
-    let export_dir = export_parent.join(&folder_name);
+    let export_folder_name = sanitize_path_component(
+        folder_name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .or(input_name.as_deref())
+            .unwrap_or("image"),
+    );
+    let export_dir = export_parent.join(&export_folder_name);
     let tiles_dir = export_dir.join("tiles");
     fs::create_dir_all(&tiles_dir).map_err(|e| e.to_string())?;
 
@@ -521,9 +674,9 @@ fn save_export_bundle(
             .trim(),
     );
     let stem = if suffix.is_empty() {
-        folder_name.clone()
+        export_folder_name.clone()
     } else {
-        format!("{}_{}", folder_name, suffix)
+        format!("{}_{}", export_folder_name, suffix)
     };
 
     let merged_path = export_dir.join(format!("{}.{}", stem, image_format.ext()));
@@ -611,6 +764,25 @@ fn save_export_bundle(
     })
 }
 
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    let mut command = if cfg!(target_os = "macos") {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(&path);
+        cmd
+    } else if cfg!(target_os = "windows") {
+        let mut cmd = std::process::Command::new("explorer");
+        cmd.arg(&path);
+        cmd
+    } else {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(&path);
+        cmd
+    };
+    command.spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -625,10 +797,14 @@ pub fn run() {
             merge_img,
             crop_img,
             load_image,
+            load_image_region,
             save_image,
             save_image_resized,
+            save_image_region_blend,
+            seed_tile_outputs_from_base64,
             save_merged_image,
-            save_export_bundle
+            save_export_bundle,
+            open_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
