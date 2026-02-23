@@ -9,6 +9,34 @@
   import { t } from '../lib/i18n';
   import { detectMainSubject } from '../lib/api';
 
+  const EXPORT_DEFAULTS_STORAGE_KEY = 'export_content_defaults';
+  type ExportContentDefaults = {
+    saveTiles: boolean;
+    saveMerged: boolean;
+    savePsd: boolean;
+  };
+
+  function readExportContentDefaults(): ExportContentDefaults {
+    try {
+      const raw = localStorage.getItem(EXPORT_DEFAULTS_STORAGE_KEY);
+      if (!raw) {
+        return { saveTiles: true, saveMerged: true, savePsd: true };
+      }
+      const parsed = JSON.parse(raw) as Partial<ExportContentDefaults>;
+      return {
+        saveTiles: parsed.saveTiles !== false,
+        saveMerged: parsed.saveMerged !== false,
+        savePsd: parsed.savePsd !== false
+      };
+    } catch {
+      return { saveTiles: true, saveMerged: true, savePsd: true };
+    }
+  }
+
+  function writeExportContentDefaults(defaults: ExportContentDefaults) {
+    localStorage.setItem(EXPORT_DEFAULTS_STORAGE_KEY, JSON.stringify(defaults));
+  }
+
   let imagePath = '';
   let originalFilename = '';
   let showSettings = false;
@@ -97,6 +125,10 @@
     if (localStorage.getItem('concurrency') !== null) {
       concurrency = parseInt(localStorage.getItem('concurrency') || '2');
     }
+    const exportDefaults = readExportContentDefaults();
+    exportIncludeTiles = exportDefaults.saveTiles;
+    exportIncludeMerged = exportDefaults.saveMerged;
+    exportIncludePsd = exportDefaults.savePsd;
     applyTheme();
 
     return () => {
@@ -164,6 +196,12 @@
   let exportMergedPath = '';
   let showFolderNameModal = false;
   let exportFolderNameInput = '';
+  let exportIncludeTiles = true;
+  let exportIncludeMerged = true;
+  let exportIncludePsd = true;
+  let exportSetAsDefault = false;
+  let exportSelectionError = '';
+  let hasTileMetadataForExport = false;
   
   // Image Info
   let imgWidth = 0;
@@ -174,6 +212,7 @@
   let subjectStatus: 'idle' | 'detecting' | 'ready' | 'no_api' | 'error' = 'idle';
   let subjectError = '';
   let subjectDetectSeq = 0;
+  $: hasTileMetadataForExport = exportTiles.length > 0;
   $: promptSubject = (manualSubject.trim() || detectedSubject || 'main subject');
   
   $: if (imagePath) {
@@ -343,7 +382,10 @@
     }
   }
 
-  async function runExportWithFolderName(folderName: string) {
+  async function runExportWithFolderName(
+    folderName: string,
+    options: { saveTiles: boolean; saveMerged: boolean; savePsd: boolean }
+  ) {
     if (!resultSrc) return;
 
     const selected = await open({
@@ -365,51 +407,38 @@
       const localizedSuffix = String($t('bgRemovedSuffix'));
 
       try {
-        if (exportTiles.length > 0) {
-          updateExportAlert(35, String($t('exporting')));
-          const verboseLogging = localStorage.getItem('verbose_logging') === 'true';
-          const exportRes: any = await invoke('save_export_bundle', {
-            outputDir: exportParentDir,
-            mergedBase64: resultSrc,
-            tiles: exportTiles,
-            sourcePath: imagePath,
-            inputName: originalFilename || 'image',
-            folderName,
-            removeBg: bgRemovalEnabled,
-            localizedSuffix,
-            verboseLogging
-          });
-          if (verboseLogging && Array.isArray(exportRes?.psd_logs) && exportRes.psd_logs.length > 0) {
-            const extraLogs = exportRes.psd_logs.map((message: string) => ({
-              type: 'info',
-              message,
-              time: new Date().toLocaleTimeString()
-            }));
-            logs = [...extraLogs.reverse(), ...logs];
-          }
-          logs = [{
-            type: 'success',
-            message: `Saved export bundle (${exportRes.tile_count} tiles): ${exportRes.export_dir}`,
+        updateExportAlert(35, String($t('exporting')));
+        const verboseLogging = localStorage.getItem('verbose_logging') === 'true';
+        const exportRes: any = await invoke('save_export_bundle', {
+          outputDir: exportParentDir,
+          mergedBase64: resultSrc,
+          tiles: exportTiles,
+          sourcePath: imagePath,
+          inputName: originalFilename || 'image',
+          folderName,
+          removeBg: bgRemovalEnabled,
+          localizedSuffix,
+          verboseLogging,
+          saveTiles: options.saveTiles,
+          saveMerged: options.saveMerged,
+          savePsd: options.savePsd
+        });
+        if (verboseLogging && Array.isArray(exportRes?.psd_logs) && exportRes.psd_logs.length > 0) {
+          const extraLogs = exportRes.psd_logs.map((message: string) => ({
+            type: 'info',
+            message,
             time: new Date().toLocaleTimeString()
-          }, ...logs];
-          exportDirPath = exportRes.export_dir || '';
-          exportMergedPath = exportRes.merged_path || '';
-        } else {
-          updateExportAlert(35, String($t('exporting')));
-          const ext = bgRemovalEnabled ? 'png' : 'jpg';
-          const stem = originalFilename
-            ? `${originalFilename}_${localizedSuffix}`
-            : `upscaled_${localizedSuffix}`;
-          const mergedPath = `${exportParentDir}/${stem}.${ext}`;
-          await invoke('save_merged_image', { path: mergedPath, base64Data: resultSrc });
-          logs = [{
-            type: 'success',
-            message: `Image saved to ${mergedPath}`,
-            time: new Date().toLocaleTimeString()
-          }, ...logs];
-          exportDirPath = exportParentDir;
-          exportMergedPath = mergedPath;
+          }));
+          logs = [...extraLogs.reverse(), ...logs];
         }
+        logs = [{
+          type: 'success',
+          message: `Saved export bundle (${exportRes.tile_count} tiles): ${exportRes.export_dir}`,
+          time: new Date().toLocaleTimeString()
+        }, ...logs];
+        exportDirPath = exportRes.export_dir || '';
+        exportMergedPath =
+          exportRes.merged_path || exportRes.psd_path || exportRes.tiles_dir || exportRes.export_dir || '';
         updateExportAlert(100, String($t('exportComplete')));
         exportDone = true;
       } catch (e: any) {
@@ -426,18 +455,46 @@
 
   async function saveResult() {
     if (!resultSrc) return;
+    const exportDefaults = readExportContentDefaults();
     exportFolderNameInput = (originalFilename || 'image').trim() || 'image';
+    exportSelectionError = '';
+    exportSetAsDefault = false;
+    exportIncludeMerged = exportDefaults.saveMerged;
+    exportIncludeTiles = hasTileMetadataForExport && exportDefaults.saveTiles;
+    exportIncludePsd = hasTileMetadataForExport && exportDefaults.savePsd;
     showFolderNameModal = true;
+  }
+
+  function setExportSelectionAsDefault() {
+    writeExportContentDefaults({
+      saveTiles: exportIncludeTiles,
+      saveMerged: exportIncludeMerged,
+      savePsd: exportIncludePsd
+    });
   }
 
   function cancelFolderNameModal() {
     showFolderNameModal = false;
+    exportSelectionError = '';
+    exportSetAsDefault = false;
   }
 
   async function confirmFolderNameModal() {
+    if (!exportIncludeTiles && !exportIncludeMerged && !exportIncludePsd) {
+      exportSelectionError = String($t('exportSelectAtLeastOne'));
+      return;
+    }
     const folderName = (exportFolderNameInput || '').trim() || (originalFilename || 'image');
+    const saveTiles = exportIncludeTiles;
+    const saveMerged = exportIncludeMerged;
+    const savePsd = exportIncludePsd;
+    if (exportSetAsDefault) {
+      setExportSelectionAsDefault();
+    }
     showFolderNameModal = false;
-    await runExportWithFolderName(folderName);
+    exportSelectionError = '';
+    exportSetAsDefault = false;
+    await runExportWithFolderName(folderName, { saveTiles, saveMerged, savePsd });
   }
 
   function clampInt(value: number, min: number, max: number): number {
@@ -963,6 +1020,46 @@
           class="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white px-3 py-2 text-sm"
           placeholder="image"
         />
+        <div class="rounded border border-gray-200 dark:border-gray-700 p-3 flex flex-col gap-2">
+          <div class="text-xs font-semibold text-gray-700 dark:text-gray-200">{$t('exportContentsPrompt')}</div>
+          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200">
+            <input
+              type="checkbox"
+              bind:checked={exportIncludeMerged}
+              class="rounded border-gray-300 dark:border-gray-600"
+            />
+            <span>{$t('exportItemMerged')}</span>
+          </label>
+          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200 {hasTileMetadataForExport ? '' : 'opacity-50'}">
+            <input
+              type="checkbox"
+              bind:checked={exportIncludeTiles}
+              disabled={!hasTileMetadataForExport}
+              class="rounded border-gray-300 dark:border-gray-600 disabled:cursor-not-allowed"
+            />
+            <span>{$t('exportItemTiles')}</span>
+          </label>
+          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200 {hasTileMetadataForExport ? '' : 'opacity-50'}">
+            <input
+              type="checkbox"
+              bind:checked={exportIncludePsd}
+              disabled={!hasTileMetadataForExport}
+              class="rounded border-gray-300 dark:border-gray-600 disabled:cursor-not-allowed"
+            />
+            <span>{$t('exportItemPsd')}</span>
+          </label>
+          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200 pt-1 border-t border-gray-200 dark:border-gray-700">
+            <input
+              type="checkbox"
+              bind:checked={exportSetAsDefault}
+              class="rounded border-gray-300 dark:border-gray-600"
+            />
+            <span>{$t('exportSetDefault')}</span>
+          </label>
+          {#if exportSelectionError}
+            <div class="text-[11px] text-red-600 dark:text-red-400">{exportSelectionError}</div>
+          {/if}
+        </div>
         <div class="flex items-center justify-end gap-2">
           <button
             type="button"
@@ -1015,7 +1112,7 @@
 
         {#if exportDone && !exportError}
           <div class="text-xs text-gray-700 dark:text-gray-200 break-all">{exportMergedPath || exportDirPath}</div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center justify-end gap-2">
             <button
               type="button"
               on:click={openExportDirectory}
