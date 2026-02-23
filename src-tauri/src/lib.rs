@@ -306,6 +306,19 @@ struct ExportTile {
     original_path: String,
 }
 
+#[derive(serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ExportOverlay {
+    id: u64,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    data_url: String,
+    #[serde(default)]
+    layer_order: u64,
+}
+
 #[derive(serde::Serialize)]
 struct SaveBundleResponse {
     export_dir: String,
@@ -319,6 +332,11 @@ struct SaveBundleResponse {
 
 struct LayerExport {
     tile: ExportTile,
+    image: RgbaImage,
+}
+
+struct OverlayLayerExport {
+    overlay: ExportOverlay,
     image: RgbaImage,
 }
 
@@ -481,7 +499,8 @@ fn write_psd(
     psd_path: &Path,
     source_image: &RgbaImage,
     merged_image: &RgbaImage,
-    layers: &[LayerExport],
+    tile_layers: &[LayerExport],
+    overlay_layers: &[OverlayLayerExport],
     psd_logs: &mut Vec<String>,
     verbose_logging: bool,
 ) -> Result<(), String> {
@@ -489,14 +508,15 @@ fn write_psd(
         psd_logs,
         verbose_logging,
         &format!(
-            "start: os={}, target={}, source={}x{}, merged={}x{}, tiles={}",
+            "start: os={}, target={}, source={}x{}, merged={}x{}, tiles={}, overlays={}",
             std::env::consts::OS,
             psd_path.to_string_lossy(),
             source_image.width(),
             source_image.height(),
             merged_image.width(),
             merged_image.height(),
-            layers.len()
+            tile_layers.len(),
+            overlay_layers.len()
         ),
     );
 
@@ -524,7 +544,7 @@ fn write_psd(
     merged_layer.set_offset(0, 0);
     document.push(merged_layer).map_err(|e| e.to_string())?;
 
-    for layer in layers {
+    for layer in tile_layers {
         let mut psd_layer = Layer::new(format!("Tile r{} c{}", layer.tile.r, layer.tile.c));
         psd_layer
             .set_image(
@@ -534,6 +554,23 @@ fn write_psd(
             )
             .map_err(|e| e.to_string())?;
         psd_layer.set_offset(layer.tile.x as usize, layer.tile.y as usize);
+        document.push(psd_layer).map_err(|e| e.to_string())?;
+    }
+
+    for (idx, layer) in overlay_layers.iter().enumerate() {
+        let mut psd_layer = Layer::new(format!(
+            "Generate In Box Overlay {} ({})",
+            idx + 1,
+            layer.overlay.id
+        ));
+        psd_layer
+            .set_image(
+                layer.image.as_raw(),
+                layer.image.height() as usize,
+                layer.image.width() as usize,
+            )
+            .map_err(|e| e.to_string())?;
+        psd_layer.set_offset(layer.overlay.x as usize, layer.overlay.y as usize);
         document.push(psd_layer).map_err(|e| e.to_string())?;
     }
 
@@ -705,6 +742,7 @@ fn save_export_bundle_sync(
     output_dir: String,
     merged_base64: String,
     tiles: Vec<ExportTile>,
+    overlays: Vec<ExportOverlay>,
     source_path: Option<String>,
     input_name: Option<String>,
     folder_name: Option<String>,
@@ -781,7 +819,7 @@ fn save_export_bundle_sync(
 
     let mut sorted_tiles: Vec<ExportTile> = Vec::new();
     if save_tiles || save_psd {
-        if tiles.is_empty() {
+        if save_tiles && tiles.is_empty() {
             return Err("No tile metadata available for selected export contents.".to_string());
         }
         sorted_tiles = tiles;
@@ -827,6 +865,38 @@ fn save_export_bundle_sync(
         }
     }
 
+    let mut overlay_layers: Vec<OverlayLayerExport> = if save_psd {
+        Vec::with_capacity(overlays.len())
+    } else {
+        Vec::new()
+    };
+    if save_psd {
+        let mut sorted_overlays = overlays;
+        sorted_overlays.sort_unstable_by_key(|o| (o.layer_order, o.id));
+        for overlay in sorted_overlays {
+            if overlay.width == 0 || overlay.height == 0 || overlay.data_url.trim().is_empty() {
+                continue;
+            }
+            let overlay_raw = decode_data_url(&overlay.data_url)?;
+            let mut overlay_img = image::load_from_memory(&overlay_raw)
+                .map_err(|e| format!("Failed to decode overlay layer {}: {}", overlay.id, e))?
+                .to_rgba8();
+            if overlay_img.width() != overlay.width || overlay_img.height() != overlay.height {
+                overlay_img = DynamicImage::ImageRgba8(overlay_img)
+                    .resize_exact(
+                        overlay.width,
+                        overlay.height,
+                        image::imageops::FilterType::Lanczos3,
+                    )
+                    .to_rgba8();
+            }
+            overlay_layers.push(OverlayLayerExport {
+                overlay,
+                image: overlay_img,
+            });
+        }
+    }
+
     if save_psd {
         let merged_image = merged_img
             .as_ref()
@@ -853,6 +923,7 @@ fn save_export_bundle_sync(
             &source_img,
             merged_image,
             &layers,
+            &overlay_layers,
             &mut psd_logs,
             verbose_logging,
         )?;
@@ -894,6 +965,7 @@ async fn save_export_bundle(
     output_dir: String,
     merged_base64: String,
     tiles: Vec<ExportTile>,
+    overlays: Vec<ExportOverlay>,
     source_path: Option<String>,
     input_name: Option<String>,
     folder_name: Option<String>,
@@ -909,6 +981,7 @@ async fn save_export_bundle(
             output_dir,
             merged_base64,
             tiles,
+            overlays,
             source_path,
             input_name,
             folder_name,

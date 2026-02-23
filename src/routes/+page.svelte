@@ -187,6 +187,7 @@
   let isProcessing = false;
   let resultSrc = '';
   let exportTiles: any[] = [];
+  let exportOverlays: any[] = [];
   let exportAlertVisible = false;
   let exportProgress = 0;
   let exportMessage = '';
@@ -202,6 +203,7 @@
   let exportSetAsDefault = false;
   let exportSelectionError = '';
   let hasTileMetadataForExport = false;
+  let hasLayerMetadataForExport = false;
   
   // Image Info
   let imgWidth = 0;
@@ -213,6 +215,7 @@
   let subjectError = '';
   let subjectDetectSeq = 0;
   $: hasTileMetadataForExport = exportTiles.length > 0;
+  $: hasLayerMetadataForExport = exportTiles.length > 0 || exportOverlays.length > 0;
   $: promptSubject = (manualSubject.trim() || detectedSubject || 'main subject');
   
   $: if (imagePath) {
@@ -413,6 +416,7 @@
           outputDir: exportParentDir,
           mergedBase64: resultSrc,
           tiles: exportTiles,
+          overlays: exportOverlays,
           sourcePath: imagePath,
           inputName: originalFilename || 'image',
           folderName,
@@ -461,7 +465,7 @@
     exportSetAsDefault = false;
     exportIncludeMerged = exportDefaults.saveMerged;
     exportIncludeTiles = hasTileMetadataForExport && exportDefaults.saveTiles;
-    exportIncludePsd = hasTileMetadataForExport && exportDefaults.savePsd;
+    exportIncludePsd = hasLayerMetadataForExport && exportDefaults.savePsd;
     showFolderNameModal = true;
   }
 
@@ -937,6 +941,7 @@
           bind:isProcessing 
           bind:resultSrc
           bind:exportTiles
+          bind:exportOverlays
           on:update_src={handleTileGridSourceUpdate}
           on:box_generate_mode_change={handleBoxGenerateModeChange}
           on:log={addLog}
@@ -1030,7 +1035,7 @@
             />
             <span>{$t('exportItemMerged')}</span>
           </label>
-          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200 {hasTileMetadataForExport ? '' : 'opacity-50'}">
+          <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200 {hasLayerMetadataForExport ? '' : 'opacity-50'}">
             <input
               type="checkbox"
               bind:checked={exportIncludeTiles}
@@ -1043,7 +1048,7 @@
             <input
               type="checkbox"
               bind:checked={exportIncludePsd}
-              disabled={!hasTileMetadataForExport}
+              disabled={!hasLayerMetadataForExport}
               class="rounded border-gray-300 dark:border-gray-600 disabled:cursor-not-allowed"
             />
             <span>{$t('exportItemPsd')}</span>
