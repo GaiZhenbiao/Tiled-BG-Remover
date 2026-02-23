@@ -95,7 +95,17 @@
   let prevTol = tolerance;
   let hasActiveWorkers = false;
   let isRegionProcessing = false;
-  let regionOverlays: Array<{ id: number; x: number; y: number; width: number; height: number; dataUrl: string }> = [];
+  type RegionOverlay = {
+    id: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    dataUrl: string;
+    visible: boolean;
+  };
+  let regionOverlays: RegionOverlay[] = [];
+  let regionOverlayList: Array<{ layer: RegionOverlay; index: number }> = [];
   let compositeRenderSeq = 0;
   const dataUrlImageCache = new Map<string, Promise<HTMLImageElement>>();
   const previewErrorKeys = new Set<string>();
@@ -191,8 +201,12 @@
     width: Math.max(1, Math.round(layer.width)),
     height: Math.max(1, Math.round(layer.height)),
     dataUrl: layer.dataUrl || '',
-    layerOrder: index
-  }));
+    layerOrder: index,
+    visible: layer.visible !== false
+  })).filter((layer) => layer.visible !== false);
+  $: regionOverlayList = regionOverlays
+    .map((layer, index) => ({ layer, index }))
+    .sort((a, b) => b.index - a.index);
   $: exportRegularLayers = tiles
     .filter((tile) => !!tile.previewDataUrl)
     .map((tile, index) => ({
@@ -409,6 +423,7 @@
     ctx.globalAlpha = 1;
 
     for (const layer of regionOverlays) {
+      if (layer.visible === false) continue;
       if (renderSeq !== compositeRenderSeq) return;
       try {
         const img = await loadImageFromDataUrl(layer.dataUrl);
@@ -1061,6 +1076,30 @@
     dispatch('box_generate_mode_change', false);
   }
 
+  function toggleRegionOverlayVisibility(layerId: number) {
+    let changed = false;
+    regionOverlays = regionOverlays.map((layer) => {
+      if (layer.id !== layerId) return layer;
+      changed = true;
+      return { ...layer, visible: !(layer.visible !== false) };
+    });
+    if (changed) {
+      scheduleCompositePreviewRender();
+    }
+  }
+
+  function deleteRegionOverlay(layerId: number) {
+    const before = regionOverlays.length;
+    regionOverlays = regionOverlays.filter((layer) => layer.id !== layerId);
+    if (regionOverlays.length !== before) {
+      scheduleCompositePreviewRender();
+      dispatch('log', {
+        type: 'info',
+        message: `Deleted box layer ${layerId}.`
+      });
+    }
+  }
+
   function isTileIntersectingSelection(tile: any): boolean {
     const x1 = tile.x;
     const y1 = tile.y;
@@ -1537,7 +1576,8 @@
           y: region.y,
           width: region.width,
           height: region.height,
-          dataUrl: resultB64
+          dataUrl: resultB64,
+          visible: true
         }
       ];
       scheduleCompositePreviewRender();
@@ -1545,7 +1585,6 @@
         type: 'success',
         message: `Selection-box generation complete (${selectedCount} tiles).`
       });
-      cancelBoxGenerateMode();
     } catch (e: any) {
       dispatch('log', {
         type: 'error',
@@ -1637,8 +1676,8 @@
              </div>
            {/if}
 
-           {#if statusActive}
-             <div class="fixed right-4 bottom-4 z-[80] pointer-events-none">
+	           {#if statusActive}
+	             <div class="fixed right-4 bottom-4 z-[80] pointer-events-none">
                <div class="rounded-lg bg-black/65 text-white border border-white/20 px-3 py-2 min-w-[230px] shadow-lg backdrop-blur-sm">
                  <div class="flex items-center gap-2">
                    <div class="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white/90"></div>
@@ -1656,8 +1695,8 @@
                    </div>
                  {/if}
                </div>
-             </div>
-           {/if}
+	             </div>
+	           {/if}
 
            {#if boxGenerateMode}
              <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1683,23 +1722,6 @@
                  <div class="absolute -right-1.5 -top-1.5 w-3 h-3 bg-white border border-blue-600 cursor-ne-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'ne')}></div>
                  <div class="absolute -left-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-sw-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'sw')}></div>
                  <div class="absolute -right-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-se-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'se')}></div>
-               </div>
-               <div class="absolute right-4 bottom-4 flex items-center gap-2">
-                 <button
-                   on:mousedown|stopPropagation
-                   on:click|stopPropagation={cancelBoxGenerateMode}
-                   class="px-3 py-1.5 rounded-md bg-black/65 hover:bg-black/75 text-white text-xs font-semibold border border-white/20 shadow"
-                 >
-                   {$t('settings.cancel')}
-                 </button>
-                 <button
-                   on:mousedown|stopPropagation
-                   on:click|stopPropagation={generateSelectionTiles}
-                   disabled={isSplitting || isMerging || isProcessing || isRegionProcessing}
-                   class="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold shadow"
-                 >
-                   {$t('generateInBox')}
-                 </button>
                </div>
              </div>
            {/if}
@@ -1747,6 +1769,88 @@
       {/if}
     </div>
     </div>
+    </div>
+  {/if}
+
+  {#if boxGenerateMode && displaySrc}
+    <div
+      class="fixed z-40 w-72 rounded-xl border border-white/20 bg-black/55 text-white shadow-xl backdrop-blur-md pointer-events-auto"
+      style="top: 7.6rem; right: 1rem;"
+    >
+      <div class="px-3 py-2 border-b border-white/15 flex items-center justify-between">
+        <span class="text-xs font-semibold uppercase tracking-wide">{$t('boxLayers')}</span>
+        <span class="text-[10px] text-white/70">{regionOverlays.length}</span>
+      </div>
+
+      <div class="max-h-56 overflow-y-auto px-2 py-2 space-y-1">
+        {#if regionOverlayList.length === 0}
+          <div class="px-2 py-3 text-[11px] text-white/65 text-center">
+            {$t('noBoxLayers')}
+          </div>
+        {:else}
+          {#each regionOverlayList as entry}
+            <div class="flex items-center gap-2 px-2 py-1.5 rounded-md bg-white/8 border border-white/10">
+              <span class="text-[11px] font-mono text-white/90 truncate flex-1">
+                {$t('layer')} {entry.index + 1} ({Math.round(entry.layer.width)}x{Math.round(entry.layer.height)})
+              </span>
+              <button
+                type="button"
+                on:mousedown|stopPropagation
+                on:click|stopPropagation={() => toggleRegionOverlayVisibility(entry.layer.id)}
+                class="h-7 w-7 inline-flex items-center justify-center rounded-md border border-white/15 hover:bg-white/10 transition-colors"
+                title={entry.layer.visible === false ? $t('settings.show') : $t('settings.hide')}
+                aria-label={entry.layer.visible === false ? $t('settings.show') : $t('settings.hide')}
+              >
+                {#if entry.layer.visible === false}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.89 1 12c.73-2.07 1.96-3.86 3.5-5.22"></path>
+                    <path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.11 11 8a11.02 11.02 0 0 1-4.06 5.94"></path>
+                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                  </svg>
+                {:else}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                {/if}
+              </button>
+              <button
+                type="button"
+                on:mousedown|stopPropagation
+                on:click|stopPropagation={() => deleteRegionOverlay(entry.layer.id)}
+                class="h-7 w-7 inline-flex items-center justify-center rounded-md border border-red-300/25 text-red-200 hover:bg-red-500/20 transition-colors"
+                title={$t('deleteLayer')}
+                aria-label={$t('deleteLayer')}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+              </button>
+            </div>
+          {/each}
+        {/if}
+      </div>
+
+      <div class="px-3 py-2 border-t border-white/15 flex items-center gap-2">
+        <button
+          type="button"
+          on:mousedown|stopPropagation
+          on:click|stopPropagation={cancelBoxGenerateMode}
+          class="flex-1 px-3 py-1.5 rounded-md bg-black/45 hover:bg-black/60 text-white text-xs font-semibold border border-white/20"
+        >
+          {$t('done')}
+        </button>
+        <button
+          type="button"
+          on:mousedown|stopPropagation
+          on:click|stopPropagation={generateSelectionTiles}
+          disabled={isSplitting || isMerging || isProcessing || isRegionProcessing}
+          class="flex-1 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold"
+        >
+          {$t('generateInBox')}
+        </button>
+      </div>
     </div>
   {/if}
 </div>
