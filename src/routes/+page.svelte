@@ -15,6 +15,9 @@
   } from '../lib/modelRegistry';
 
   const EXPORT_DEFAULTS_STORAGE_KEY = 'export_content_defaults';
+  const BOX_LAYER_SIDEBAR_WIDTH_STORAGE_KEY = 'box_layer_sidebar_width';
+  const BOX_LAYER_SIDEBAR_MIN_WIDTH = 240;
+  const BOX_LAYER_SIDEBAR_MAX_WIDTH = 520;
   type ExportContentDefaults = {
     saveTiles: boolean;
     saveMerged: boolean;
@@ -51,8 +54,6 @@
   let themeMediaQuery: MediaQueryList | null = null;
   let systemPrefersDark = false;
   
-  // Sidebar Tabs
-  let activeTab = 'controls'; // 'controls' or 'logs'
   let logs: { type: string, message: string, time: string }[] = [];
   let selectedModel = ensureSelectedModelName(
     readImageGenerationModels(),
@@ -80,7 +81,7 @@
     20000
   );
   let smartQualitySliderPx = smartTileTolerancePx;
-  let showTileLines = localStorage.getItem('show_tile_lines') === 'true';
+  let showTileLines = false;
   let alwaysSquareTiles = localStorage.getItem('always_square_tiles') === 'true';
   let isAdjustingGrid = false;
   let gridAdjustTimer: ReturnType<typeof setTimeout> | null = null;
@@ -100,18 +101,23 @@
   let nonBgCustomHex = normalizeHexColor(localStorage.getItem('non_bg_custom_hex') || '#FFFFFF');
   let nonBgBackgroundHex = resolveNonBgHex(nonBgColorMode, nonBgCustomHex);
   let showOriginalInput = false;
-  let boxGenerateMode = false;
+  let boxGenerateMode = true;
   let boxAspectMode = '1:1';
   let boxGenerateAspectRatio: number | null = 1;
-  const boxAspectOptions = [
-    { label: 'Free', value: 'free' },
-    { label: '1:1', value: '1:1' },
-    { label: '4:3', value: '4:3' },
-    { label: '16:9', value: '16:9' },
-    { label: '3:2', value: '3:2' },
-    { label: '3:4', value: '3:4' },
-    { label: '9:16', value: '9:16' }
-  ];
+  let tileGridRef: any = null;
+  let boxLayers: any[] = [];
+  let hasGeneratedBoxLayer = false;
+  let showToolbarLogsPopover = false;
+  let showToolbarBackgroundPopover = false;
+  let showToolbarSubjectPopover = false;
+  let boxLayerSidebarWidth = clampInt(
+    parseInt(localStorage.getItem(BOX_LAYER_SIDEBAR_WIDTH_STORAGE_KEY) || '320'),
+    BOX_LAYER_SIDEBAR_MIN_WIDTH,
+    BOX_LAYER_SIDEBAR_MAX_WIDTH
+  );
+  let isResizingBoxLayerSidebar = false;
+  let boxLayerResizeStartX = 0;
+  let boxLayerResizeStartWidth = boxLayerSidebarWidth;
   
   onMount(() => {
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
@@ -162,6 +168,7 @@
     if (gridAdjustTimer) {
       clearTimeout(gridAdjustTimer);
     }
+    stopBoxLayerSidebarResize();
   });
 
   function handleSettingsClose() {
@@ -194,7 +201,6 @@
   }
 
   $: localStorage.setItem('smart_tile_tolerance_px', smartTileTolerancePx.toString());
-  $: localStorage.setItem('show_tile_lines', showTileLines.toString());
   $: localStorage.setItem('non_bg_color_mode', nonBgColorMode);
   $: localStorage.setItem('non_bg_custom_hex', normalizeHexColor(nonBgCustomHex));
   $: nonBgBackgroundHex = resolveNonBgHex(nonBgColorMode, nonBgCustomHex);
@@ -236,11 +242,16 @@
   $: if (imagePath) {
     updateImageInfo();
   }
+  $: if (!imagePath) {
+    showToolbarLogsPopover = false;
+    showToolbarBackgroundPopover = false;
+    showToolbarSubjectPopover = false;
+  }
 
   function clearInput() {
     imagePath = '';
     resultSrc = '';
-    boxGenerateMode = false;
+    boxGenerateMode = true;
     detectedSubject = '';
     manualSubject = '';
     userEditedSubject = false;
@@ -322,7 +333,7 @@
   function handleImageSelected(path: string) {
     imagePath = path;
     resultSrc = '';
-    boxGenerateMode = false;
+    boxGenerateMode = true;
     manualSubject = '';
     userEditedSubject = false;
     startSubjectDetection(path);
@@ -446,7 +457,7 @@
       });
       imagePath = newPath;
       resultSrc = '';
-      boxGenerateMode = false;
+      boxGenerateMode = true;
       manualSubject = '';
       userEditedSubject = false;
       startSubjectDetection(newPath);
@@ -473,6 +484,39 @@
     userEditedSubject = true;
   }
 
+  function handleTileGridSubjectInput(event: CustomEvent<string>) {
+    manualSubject = (event.detail || '').toString();
+    userEditedSubject = true;
+  }
+
+  function handleTileGridBoxAspectModeChange(event: CustomEvent<string>) {
+    boxAspectMode = (event.detail || '1:1').toString();
+  }
+
+  function closeToolbarPopovers() {
+    showToolbarLogsPopover = false;
+    showToolbarBackgroundPopover = false;
+    showToolbarSubjectPopover = false;
+  }
+
+  function toggleToolbarLogsPopover() {
+    const next = !showToolbarLogsPopover;
+    closeToolbarPopovers();
+    showToolbarLogsPopover = next;
+  }
+
+  function toggleToolbarBackgroundPopover() {
+    const next = !showToolbarBackgroundPopover;
+    closeToolbarPopovers();
+    showToolbarBackgroundPopover = next;
+  }
+
+  function toggleToolbarSubjectPopover() {
+    const next = !showToolbarSubjectPopover;
+    closeToolbarPopovers();
+    showToolbarSubjectPopover = next;
+  }
+
   function useDetectedSubject() {
     manualSubject = detectedSubject || '';
     userEditedSubject = false;
@@ -484,13 +528,84 @@
     imagePath = nextPath;
   }
 
-  function handleBoxGenerateModeChange(e: CustomEvent<boolean>) {
-    boxGenerateMode = Boolean(e.detail);
+  function handleRegenerateBoxLayer(layerId: number) {
+    tileGridRef?.regenerateRegionOverlay?.(layerId);
   }
 
-  function toggleBoxGenerateMode() {
-    boxGenerateMode = !boxGenerateMode;
+  function handleToggleBoxLayerVisibility(layerId: number) {
+    tileGridRef?.toggleRegionOverlayVisibility?.(layerId);
   }
+
+  function handleDeleteBoxLayer(layerId: number) {
+    tileGridRef?.deleteRegionOverlay?.(layerId);
+  }
+
+  function handleSetBoxLayerVersion(layerId: number, versionIndex: number) {
+    tileGridRef?.setRegionOverlayVersion?.(layerId, versionIndex);
+  }
+
+  function handleMoveBoxLayerUp(layerId: number) {
+    tileGridRef?.moveRegionOverlayById?.(layerId, 'up');
+  }
+
+  function handleMoveBoxLayerDown(layerId: number) {
+    tileGridRef?.moveRegionOverlayById?.(layerId, 'down');
+  }
+
+  function handleLayerHoverStart(layerId: number) {
+    tileGridRef?.setHoveredRegionOverlay?.(layerId);
+  }
+
+  function handleLayerHoverEnd() {
+    tileGridRef?.setHoveredRegionOverlay?.(null);
+  }
+
+  function handleRenameBoxLayer(layerId: number, name: string) {
+    tileGridRef?.renameRegionOverlay?.(layerId, name);
+  }
+
+  function persistBoxLayerSidebarWidth() {
+    localStorage.setItem(BOX_LAYER_SIDEBAR_WIDTH_STORAGE_KEY, String(boxLayerSidebarWidth));
+  }
+
+  function onBoxLayerSidebarResizeMove(event: MouseEvent) {
+    if (!isResizingBoxLayerSidebar) return;
+    const delta = event.clientX - boxLayerResizeStartX;
+    boxLayerSidebarWidth = clampInt(
+      boxLayerResizeStartWidth + delta,
+      BOX_LAYER_SIDEBAR_MIN_WIDTH,
+      BOX_LAYER_SIDEBAR_MAX_WIDTH
+    );
+  }
+
+  function stopBoxLayerSidebarResize() {
+    if (!isResizingBoxLayerSidebar) return;
+    isResizingBoxLayerSidebar = false;
+    window.removeEventListener('mousemove', onBoxLayerSidebarResizeMove);
+    window.removeEventListener('mouseup', stopBoxLayerSidebarResize);
+    persistBoxLayerSidebarWidth();
+  }
+
+  function startBoxLayerSidebarResize(event: MouseEvent) {
+    if (event.button !== 0) return;
+    isResizingBoxLayerSidebar = true;
+    boxLayerResizeStartX = event.clientX;
+    boxLayerResizeStartWidth = boxLayerSidebarWidth;
+    window.addEventListener('mousemove', onBoxLayerSidebarResizeMove);
+    window.addEventListener('mouseup', stopBoxLayerSidebarResize);
+    event.preventDefault();
+  }
+
+  function getLayerStatusLabel(status: string): string {
+    if (status === 'queued') return String($t('layerQueued'));
+    if (status === 'processing') return String($t('layerProcessing'));
+    if (status === 'error') return String($t('layerFailed'));
+    return String($t('done'));
+  }
+
+  $: hasGeneratedBoxLayer = boxLayers.some(
+    (layer) => layer.status === 'done' || (Number(layer.versionCount) || 0) > 0
+  );
 
   function addLog(e: any) {
     logs = [{ ...e.detail, time: new Date().toLocaleTimeString() }, ...logs].slice(0, 100);
@@ -766,6 +881,48 @@
           {$t('save')}
         </button>
       {/if}
+      {#if imagePath}
+        <select
+          id="header-tile-res-select"
+          bind:value={aiOutputRes}
+          class="h-8 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 transition-colors"
+          title={$t('aiOutputRes')}
+          aria-label={$t('aiOutputRes')}
+        >
+          {#each availableResolutions as res}
+            <option value={res}>{res} x {res}</option>
+          {/each}
+        </select>
+      {/if}
+      <div class="relative">
+        <button
+          type="button"
+          on:click={toggleToolbarLogsPopover}
+          class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors border border-transparent"
+          title={$t('logs')}
+          aria-label={$t('logs')}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+        </button>
+        {#if showToolbarLogsPopover}
+          <div class="absolute top-11 right-0 w-[34rem] max-w-[90vw] rounded-xl border border-gray-200 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95 backdrop-blur-md shadow-2xl p-3 flex flex-col gap-2 z-[90]">
+            <div class="text-xs font-semibold text-gray-700 dark:text-gray-200">{$t('logs')} ({logs.length})</div>
+            <div class="max-h-72 overflow-y-auto flex flex-col gap-2 font-mono text-[11px]">
+              {#if logs.length === 0}
+                <div class="text-gray-400 dark:text-gray-500 text-center py-6 italic">No logs yet...</div>
+              {/if}
+              {#each logs as log}
+                <div class="flex gap-2 border-b border-gray-100 dark:border-gray-700/50 pb-1 transition-colors">
+                  <span class="text-gray-500 dark:text-gray-600">[{log.time}]</span>
+                  <span class={log.type === 'error' ? 'text-red-600 dark:text-red-400' : log.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-blue-600 dark:text-blue-400'}>
+                    {log.message}
+                  </span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
       <button 
         aria-label="Settings"
         on:click={() => showSettings = true} 
@@ -777,361 +934,294 @@
   </header>
 
   <!-- Content -->
-  <div class="flex-1 flex overflow-hidden">
-    <!-- Sidebar Controls -->
-    <aside class="w-80 shrink-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden transition-colors">
-      <!-- Tabs Header -->
-      <div class="flex border-b border-gray-200 dark:border-gray-700">
-        <button 
-          on:click={() => activeTab = 'controls'}
-          class="flex-1 py-2 text-sm font-medium {activeTab === 'controls' ? 'bg-gray-100 dark:bg-gray-700 text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
-        >
-          {$t('controls')}
-        </button>
-        <button 
-          on:click={() => activeTab = 'logs'}
-          class="flex-1 py-2 text-sm font-medium {activeTab === 'logs' ? 'bg-gray-100 dark:bg-gray-700 text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}"
-        >
-          {$t('logs')} ({logs.length})
-        </button>
-      </div>
-
-      <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-6">
-        {#if activeTab === 'controls'}
-            <div class="flex flex-col gap-2">
-              <div class="flex items-center justify-between">
-                <label for="grid-rows" class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{$t('gridLayout')}</label>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <span class="text-[10px] text-gray-500 dark:text-gray-400">{$t('smartGrid')}</span>
-                  <input type="checkbox" bind:checked={smartGridEnabled} class="toggle toggle-xs accent-blue-500">
-                </label>
-              </div>
-              
-              {#if smartGridEnabled}
-                <div class="bg-gray-50 dark:bg-gray-900/50 p-2 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-2 transition-colors">
-                  <div class="flex justify-between text-xs">
-                    <span class="text-gray-500">{$t('rows')}</span>
-                    <span class="font-mono text-gray-700 dark:text-gray-200">{rows}</span>
-                  </div>
-                  <div class="flex justify-between text-xs">
-                    <span class="text-gray-500">{$t('cols')}</span>
-                    <span class="font-mono text-gray-700 dark:text-gray-200">{cols}</span>
-                  </div>
-                  <div class="flex justify-between items-center text-xs mt-1">
-                    <span class="text-gray-500 dark:text-gray-400">{$t('tileCount')}</span>
-                    <span class="font-mono text-gray-700 dark:text-gray-200">{totalTiles}</span>
-                  </div>
-                  <div class="flex justify-between text-[10px] text-gray-500 dark:text-gray-400">
-                    <span>{$t('lowerQuality')}</span>
-                    <span>{$t('higherQuality')}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={smartTileLimitMin}
-                    max={smartTileLimitMax}
-                    step="1"
-                    value={smartQualitySliderPx}
-                    on:input={onSmartQualityInput}
-                    class="w-full accent-blue-500"
-                  >
-                </div>
-              {:else}
-                <div class="flex gap-2 items-center">
-                  <span class="w-8 text-sm text-gray-600 dark:text-gray-300">{$t('rows')}</span>
-                  <input id="grid-rows" type="range" min="1" max="16" bind:value={rows} on:input={markGridAdjusting} class="flex-1 accent-blue-500">
-                  <span class="w-4 text-sm text-right font-mono text-gray-700 dark:text-gray-200">{rows}</span>
-                </div>
-                <div class="flex gap-2 items-center">
-                  <span class="w-8 text-sm text-gray-600 dark:text-gray-300">{$t('cols')}</span>
-                  <input id="grid-cols" type="range" min="1" max="16" bind:value={cols} on:input={markGridAdjusting} class="flex-1 accent-blue-500">
-                  <span class="w-4 text-sm text-right font-mono text-gray-700 dark:text-gray-200">{cols}</span>
-                </div>
-              {/if}
-              
-              <div class="flex flex-col gap-1">
-                <div class="flex justify-between items-center">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">
-                    {#if alwaysSquareTiles}
-                      {$t('overlap')} X:{Math.round(overlapXRatio * 100)}% / Y:{Math.round(overlapYRatio * 100)}%
-                    {:else}
-                      {$t('overlap')} ({Math.round(overlap * 100)}%)
-                    {/if}
-                  </span>
-                  <input
-                    id="overlap-slider"
-                    type="range"
-                    min="0"
-                    max="0.5"
-                    step="0.05"
-                    bind:value={overlap}
-                    on:input={markGridAdjusting}
-                    class="w-32 accent-blue-500 disabled:opacity-40"
-                    disabled={alwaysSquareTiles}
-                  >
-                </div>
-              </div>
-
-            </div>
-            
-            <div class="flex flex-col gap-2">
-              <label for="tile-res-select" class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{$t('aiOutputRes')}</label>
-              <select id="tile-res-select" bind:value={aiOutputRes} class="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded p-1.5 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 transition-colors">
-                {#each availableResolutions as res}
-                  <option value={res}>{res} x {res}</option>
-                {/each}
-              </select>
-            </div>
-
-            {#if !bgRemovalEnabled}
-              <div class="bg-gray-50 dark:bg-gray-900/50 p-3 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-2 transition-colors">
-                <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{$t('backgroundColor')}</span>
-                <div class="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    on:click={() => nonBgColorMode = 'white'}
-                    title={$t('colorWhite')}
-                    aria-label={$t('colorWhite')}
-                    class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'white' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-                  >
-                    <span class="w-5 h-5 rounded border border-gray-300" style="background-color: #FFFFFF"></span>
-                  </button>
-                  <button
-                    type="button"
-                    on:click={() => nonBgColorMode = 'black'}
-                    title={$t('colorBlack')}
-                    aria-label={$t('colorBlack')}
-                    class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'black' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-                  >
-                    <span class="w-5 h-5 rounded border border-gray-300" style="background-color: #000000"></span>
-                  </button>
-                  <button
-                    type="button"
-                    on:click={() => nonBgColorMode = 'green'}
-                    title={$t('colorGreen')}
-                    aria-label={$t('colorGreen')}
-                    class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'green' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-                  >
-                    <span class="w-5 h-5 rounded border border-gray-300" style="background-color: #00FF00"></span>
-                  </button>
-                  <button
-                    type="button"
-                    on:click={() => nonBgColorMode = 'blue'}
-                    title={$t('colorBlue')}
-                    aria-label={$t('colorBlue')}
-                    class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'blue' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-                  >
-                    <span class="w-5 h-5 rounded border border-gray-300" style="background-color: #0000FF"></span>
-                  </button>
-                  <button
-                    type="button"
-                    on:click={() => nonBgColorMode = 'custom'}
-                    title={$t('colorCustom')}
-                    aria-label={$t('colorCustom')}
-                    class="h-8 px-2 flex items-center gap-1.5 rounded border text-xs transition-colors {nonBgColorMode === 'custom' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-                  >
-                    <span class="text-gray-700 dark:text-gray-200">{$t('colorCustom')}</span>
-                    <span class="w-5 h-5 rounded border border-gray-300" style={`background-color: ${normalizeHexColor(nonBgCustomHex)}`}></span>
-                  </button>
-                </div>
-                {#if nonBgColorMode === 'custom'}
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={normalizeHexColor(nonBgCustomHex)}
-                      on:input={(e) => nonBgCustomHex = (e.currentTarget as HTMLInputElement).value}
-                      class="w-10 h-8 rounded border border-gray-300 dark:border-gray-600 bg-transparent p-0"
-                    >
-                    <input
-                      type="text"
-                      bind:value={nonBgCustomHex}
-                      on:blur={() => nonBgCustomHex = normalizeHexColor(nonBgCustomHex)}
-                      placeholder="#FFFFFF"
-                      class="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1.5 text-xs font-mono text-gray-900 dark:text-white"
-                    >
-                  </div>
-                {/if}
-              </div>
-            {/if}
-
-            <div class="bg-gray-50 dark:bg-gray-900/50 p-3 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-2 transition-colors">
-              <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{$t('resolutionInfo')}</span>
-              <div class="flex flex-col gap-1">
-                <div class="flex justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">{$t('wholeImage')}</span>
-                  <span class="font-mono text-gray-800 dark:text-gray-200">{imgWidth} x {imgHeight}</span>
-                </div>
-                <div class="flex justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">{$t('perTile')}</span>
-                  <span class="font-mono text-gray-800 dark:text-gray-200">{Math.round(tileW)} x {Math.round(tileH)}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="bg-gray-50 dark:bg-gray-900/50 p-3 rounded border border-gray-200 dark:border-gray-700 flex flex-col gap-2 transition-colors">
-              <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{$t('mainSubject')}</span>
-              {#if !imagePath}
-                <span class="text-xs text-gray-500 dark:text-gray-400">-</span>
-              {:else if subjectStatus === 'detecting'}
-                <span class="text-xs text-blue-600 dark:text-blue-400">{$t('detectingSubject')}</span>
-              {:else if subjectStatus === 'ready'}
-                <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{detectedSubject}</span>
-              {:else if subjectStatus === 'no_api'}
-                <span class="text-xs text-gray-500 dark:text-gray-400">{$t('noApiKeySubject')}</span>
-              {:else}
-                <span class="text-xs text-red-600 dark:text-red-400">{$t('subjectDetectFailed')}{subjectError ? `: ${subjectError}` : ''}</span>
-              {/if}
-
-              {#if imagePath}
-                <div class="mt-1 flex flex-col gap-2">
-                  <label for="subject-input" class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    {$t('subjectForPrompt')}
-                  </label>
-                  <input
-                    id="subject-input"
-                    type="text"
-                    value={manualSubject}
-                    on:input={onSubjectInput}
-                    placeholder={$t('subjectPlaceholder')}
-                    class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded p-1.5 text-xs text-gray-900 dark:text-white transition-colors"
-                  />
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="text-[10px] text-gray-500 dark:text-gray-400 truncate">{$t('usingSubject')}: {promptSubject}</span>
-                    <button
-                      type="button"
-                      class="text-[10px] px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      on:mousedown|preventDefault
-                      on:click={useDetectedSubject}
-                      disabled={!detectedSubject}
-                    >
-                      {$t('useDetectedSubject')}
-                    </button>
-                  </div>
-                </div>
-              {/if}
-            </div>
-
-        {:else}
-          <!-- Logs Tab -->
-          <div class="flex flex-col gap-2 font-mono text-[11px]">
-            {#if logs.length === 0}
-              <div class="text-gray-400 dark:text-gray-500 text-center py-8 italic">No logs yet...</div>
-            {/if}
-            {#each logs as log}
-              <div class="flex gap-2 border-b border-gray-100 dark:border-gray-700/50 pb-1 transition-colors">
-                <span class="text-gray-500 dark:text-gray-600">[{log.time}]</span>
-                <span class={log.type === 'error' ? 'text-red-600 dark:text-red-400' : log.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-blue-600 dark:text-blue-400'}>
-                  {log.message}
-                </span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-
-      {#if activeTab === 'controls'}
-        <div class="px-4 pt-3 pb-4 border-t border-gray-200/70 dark:border-gray-700/70 bg-white/65 dark:bg-gray-800/55 backdrop-blur-md z-10">
-          <button 
-            on:click={() => isProcessing = true}
-            class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
-            disabled={isProcessing || !imagePath}
-          >
-            {isProcessing ? $t('processing') : $t('processAll')}
-          </button>
-        </div>
-      {/if}
-    </aside>
-
-    <!-- Main View -->
-    <section class="flex-1 min-w-0 min-h-0 bg-gray-50 dark:bg-gray-900 relative overflow-hidden transition-colors">
+  <div class="flex-1 overflow-hidden">
+    <section class="w-full h-full min-w-0 min-h-0 bg-gray-50 dark:bg-gray-900 relative overflow-hidden transition-colors">
       {#if !imagePath}
         <div class="w-full h-full flex items-center justify-center p-6">
           <ImageUploader on:selected={(e) => handleImageSelected(e.detail)} />
         </div>
       {:else}
-        <TileGrid 
-          src={imagePath} 
-          {rows} 
-          {cols} 
-          overlap={overlap}
-          overlapXRatio={overlapXRatio}
-          overlapYRatio={overlapYRatio}
-          {aiOutputRes}
-          {bgRemovalEnabled}
-          {keyColor}
-          {tolerance}
-          nonBgBackgroundHex={nonBgBackgroundHex}
-          {concurrency}
-          {showTileLines}
-          {isAdjustingGrid}
-          {showOriginalInput}
-          {boxGenerateMode}
-          boxGenerateAspectRatio={boxGenerateAspectRatio}
-          detectedSubject={promptSubject}
-          bind:isProcessing 
-          bind:resultSrc
-          bind:exportTiles
-          bind:exportOverlays
-          bind:exportRegularLayers
-          on:update_src={handleTileGridSourceUpdate}
-          on:box_generate_mode_change={handleBoxGenerateModeChange}
-          on:log={addLog}
-        />
-
-        <div class="absolute top-4 right-4 z-50 flex items-center gap-2 pointer-events-auto">
-          {#if boxGenerateMode}
-            <select
-              bind:value={boxAspectMode}
-              class="h-11 px-3 rounded-full shadow-xl border border-gray-200 dark:border-gray-600 bg-white/85 dark:bg-gray-800/85 text-sm text-gray-900 dark:text-white backdrop-blur-sm"
-              title={$t('boxAspectRatio')}
-              aria-label={$t('boxAspectRatio')}
-            >
-              {#each boxAspectOptions as option}
-                <option value={option.value}>{option.label}</option>
-              {/each}
-            </select>
-          {/if}
-
-          <button
-            type="button"
-            on:click={toggleBoxGenerateMode}
-            class="p-3 rounded-full shadow-xl border backdrop-blur-sm transition-all active:scale-90 select-none {boxGenerateMode ? 'bg-blue-600 text-white border-blue-500 hover:bg-blue-500' : 'bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 text-gray-900 dark:text-white border-gray-200 dark:border-gray-600'}"
-            title={$t('generateInBox')}
-            aria-label={$t('generateInBox')}
+        <div class="w-full h-full min-w-0 min-h-0 flex">
+          <aside
+            class="h-full shrink-0 border-r border-gray-200 dark:border-gray-700 bg-white/88 dark:bg-gray-800/82 backdrop-blur-md flex flex-col gap-2 pt-3 pb-3 pl-3 pr-0"
+            style={`width: ${boxLayerSidebarWidth}px;`}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-              <path d="M8 12h8"></path>
-              <path d="M12 8v8"></path>
-            </svg>
-          </button>
-
-          <button
-            type="button"
-            on:click={() => showTileLines = !showTileLines}
-            class="p-3 rounded-full shadow-xl border backdrop-blur-sm transition-all active:scale-90 select-none {showTileLines ? 'bg-blue-600 text-white border-blue-500 hover:bg-blue-500' : 'bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 text-gray-900 dark:text-white border-gray-200 dark:border-gray-600'}"
-            title={$t('showTileLines')}
-            aria-label={$t('showTileLines')}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-              <path d="M3 9h18"></path>
-              <path d="M9 21V3"></path>
-            </svg>
-          </button>
-
-          {#if resultSrc}
-            <button 
-              on:mousedown={() => showOriginalInput = true} 
-              on:mouseup={() => showOriginalInput = false} 
-              on:mouseleave={() => showOriginalInput = false}
-              on:touchstart={() => showOriginalInput = true} 
-              on:touchend={() => showOriginalInput = false}
-              class="bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 text-gray-900 dark:text-white p-3 rounded-full shadow-xl border border-gray-200 dark:border-gray-600 backdrop-blur-sm transition-all active:scale-90 select-none"
-              title={$t('holdToShowOriginal')}
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{$t('boxLayers')}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{boxLayers.length}</span>
+            </div>
+            {#if !hasGeneratedBoxLayer}
+              <div class="text-[11px] text-gray-500 dark:text-gray-400 pr-3">
+                {$t('drawSelectionHint')}
+              </div>
+            {/if}
+            <div class="flex-1 overflow-y-auto flex flex-col gap-1.5 pr-2">
+              {#if boxLayers.length === 0}
+                <div class="text-xs text-gray-500 dark:text-gray-400 text-center py-4">
+                  {$t('noBoxLayers')}
+                </div>
+              {:else}
+                {#each boxLayers as layer, index (layer.id)}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div
+                    class="relative rounded border px-2 py-1.5 bg-white/80 dark:bg-gray-800/80 border-gray-200 dark:border-gray-700 shadow-sm"
+                    on:mouseenter={() => handleLayerHoverStart(layer.id)}
+                    on:mouseleave={handleLayerHoverEnd}
+                  >
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={layer.name || `${$t('layer')} ${boxLayers.length - index}`}
+                        on:input={(e) => handleRenameBoxLayer(layer.id, (e.currentTarget as HTMLInputElement).value)}
+                        on:change={(e) => handleRenameBoxLayer(layer.id, (e.currentTarget as HTMLInputElement).value)}
+                        on:blur={(e) => handleRenameBoxLayer(layer.id, (e.currentTarget as HTMLInputElement).value)}
+                        class="h-7 min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 text-xs font-medium text-gray-800 dark:text-gray-100"
+                        title={$t('layerName')}
+                        aria-label={$t('layerName')}
+                      />
+                      {#if layer.status !== 'done'}
+                        <span
+                          class="text-[10px] px-1.5 py-0.5 rounded font-medium
+                          {layer.status === 'processing'
+                            ? 'text-blue-700 dark:text-blue-300'
+                            : layer.status === 'queued'
+                            ? 'text-amber-700 dark:text-amber-300 border border-amber-300/70 dark:border-amber-500/60'
+                            : 'text-red-700 dark:text-red-300 border border-red-300/70 dark:border-red-500/60'}"
+                        >
+                          {getLayerStatusLabel(layer.status)}
+                        </span>
+                      {/if}
+                      {#if layer.status === 'processing' || layer.status === 'queued'}
+                        <span class="w-3.5 h-3.5 inline-flex items-center justify-center">
+                          <span class="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin"></span>
+                        </span>
+                      {/if}
+                    </div>
+                    <div class="mt-1 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        on:click={() => handleToggleBoxLayerVisibility(layer.id)}
+                        class="h-7 w-7 inline-flex items-center justify-center rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                        title={layer.visible ? $t('settings.hide') : $t('settings.show')}
+                        aria-label={layer.visible ? $t('settings.hide') : $t('settings.show')}
+                      >
+                        {#if !layer.visible}
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.89 1 12c.73-2.07 1.96-3.86 3.5-5.22"></path><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.11 11 8a11.02 11.02 0 0 1-4.06 5.94"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                        {:else}
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        {/if}
+                      </button>
+                      <button
+                        type="button"
+                        on:click={() => handleMoveBoxLayerUp(layer.id)}
+                        disabled={index === 0}
+                        class="h-7 w-7 inline-flex items-center justify-center rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={$t('moveUp')}
+                        aria-label={$t('moveUp')}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"></path></svg>
+                      </button>
+                      <button
+                        type="button"
+                        on:click={() => handleMoveBoxLayerDown(layer.id)}
+                        disabled={index === boxLayers.length - 1}
+                        class="h-7 w-7 inline-flex items-center justify-center rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={$t('moveDown')}
+                        aria-label={$t('moveDown')}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+                      </button>
+                      <select
+                        value={layer.activeVersionIndex}
+                        on:change={(e) => handleSetBoxLayerVersion(layer.id, parseInt((e.currentTarget as HTMLSelectElement).value))}
+                        disabled={layer.versionCount <= 0}
+                        class="h-7 flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-[11px] text-gray-900 dark:text-white px-1 disabled:opacity-50"
+                        title={$t('layerVersion')}
+                        aria-label={$t('layerVersion')}
+                      >
+                        {#if layer.versionCount > 0}
+                          {#each Array.from({ length: layer.versionCount }) as _, versionIndex}
+                            <option value={versionIndex}>v{versionIndex + 1}</option>
+                          {/each}
+                        {:else}
+                          <option value="0">v0</option>
+                        {/if}
+                      </select>
+                      <button
+                        type="button"
+                        on:click={() => handleRegenerateBoxLayer(layer.id)}
+                        disabled={!imagePath}
+                        class="h-7 w-7 inline-flex items-center justify-center rounded border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-50"
+                        title={$t('regenerate')}
+                        aria-label={$t('regenerate')}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 0 1 15.5-6.36L21 8"></path><path d="M3 22v-6h6"></path><path d="M21 12a9 9 0 0 1-15.5 6.36L3 16"></path></svg>
+                      </button>
+                      <button
+                        type="button"
+                        on:click={() => handleDeleteBoxLayer(layer.id)}
+                        class="h-7 w-7 inline-flex items-center justify-center rounded border border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30"
+                        title={$t('deleteLayer')}
+                        aria-label={$t('deleteLayer')}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                      </button>
+                    </div>
+                    {#if layer.status === 'error' && layer.errorMessage}
+                      <div class="mt-1 text-[10px] text-red-600 dark:text-red-400 truncate">{layer.errorMessage}</div>
+                    {/if}
+                  </div>
+                {/each}
+              {/if}
+            </div>
+          </aside>
+          <div class="relative h-full w-0 shrink-0">
+            <button
+              type="button"
+              class="absolute -left-[3px] top-0 h-full w-[6px] cursor-col-resize group focus:outline-none"
+              aria-label={$t('boxLayers')}
+              title={$t('boxLayers')}
+              on:mousedown={startBoxLayerSidebarResize}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              <div class="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-gray-300 dark:bg-gray-700 group-hover:bg-blue-500 transition-colors"></div>
             </button>
-          {/if}
+          </div>
+
+          <div class="flex-1 min-w-0 min-h-0 relative">
+            <TileGrid 
+              bind:this={tileGridRef}
+              src={imagePath} 
+              {rows} 
+              {cols} 
+              overlap={overlap}
+              overlapXRatio={overlapXRatio}
+              overlapYRatio={overlapYRatio}
+              {aiOutputRes}
+              {bgRemovalEnabled}
+              {keyColor}
+              {tolerance}
+              nonBgBackgroundHex={nonBgBackgroundHex}
+              {concurrency}
+              {showTileLines}
+              {isAdjustingGrid}
+              {showOriginalInput}
+              {boxGenerateMode}
+              boxAspectMode={boxAspectMode}
+              boxGenerateAspectRatio={boxGenerateAspectRatio}
+              promptSubject={promptSubject}
+              detectedSubject={promptSubject}
+              bind:isProcessing 
+              bind:resultSrc
+              bind:exportTiles
+              bind:exportOverlays
+              bind:exportRegularLayers
+              bind:boxLayers
+              on:update_src={handleTileGridSourceUpdate}
+              on:subject_input={handleTileGridSubjectInput}
+              on:box_aspect_mode_change={handleTileGridBoxAspectModeChange}
+              on:log={addLog}
+            />
+
+            <div class="absolute top-4 right-4 z-50 flex items-start gap-2 pointer-events-auto">
+              {#if !bgRemovalEnabled}
+                <div class="relative">
+                  <button
+                    type="button"
+                    on:click={toggleToolbarBackgroundPopover}
+                    class="bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 text-gray-900 dark:text-white p-3 rounded-full shadow-xl border border-gray-200 dark:border-gray-600 backdrop-blur-sm transition-all active:scale-90 select-none"
+                    title={$t('backgroundColor')}
+                    aria-label={$t('backgroundColor')}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m2 22 1-1h3l9-9"></path><path d="M3 21v-3L14 7l3 3-11 11H3Z"></path><path d="m14 7 1.5-1.5a2.12 2.12 0 1 1 3 3L17 10"></path></svg>
+                  </button>
+                  {#if showToolbarBackgroundPopover}
+                    <div class="absolute top-14 right-0 w-72 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95 backdrop-blur-md shadow-2xl p-3 flex flex-col gap-2">
+                      <div class="text-xs font-semibold text-gray-700 dark:text-gray-200">{$t('backgroundColor')}</div>
+                      <div class="flex flex-wrap gap-2">
+                        <button type="button" on:click={() => nonBgColorMode = 'white'} title={$t('colorWhite')} aria-label={$t('colorWhite')} class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'white' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"><span class="w-5 h-5 rounded border border-gray-300" style="background-color: #FFFFFF"></span></button>
+                        <button type="button" on:click={() => nonBgColorMode = 'black'} title={$t('colorBlack')} aria-label={$t('colorBlack')} class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'black' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"><span class="w-5 h-5 rounded border border-gray-300" style="background-color: #000000"></span></button>
+                        <button type="button" on:click={() => nonBgColorMode = 'green'} title={$t('colorGreen')} aria-label={$t('colorGreen')} class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'green' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"><span class="w-5 h-5 rounded border border-gray-300" style="background-color: #00FF00"></span></button>
+                        <button type="button" on:click={() => nonBgColorMode = 'blue'} title={$t('colorBlue')} aria-label={$t('colorBlue')} class="w-8 h-8 flex items-center justify-center rounded border transition-colors {nonBgColorMode === 'blue' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}"><span class="w-5 h-5 rounded border border-gray-300" style="background-color: #0000FF"></span></button>
+                        <button type="button" on:click={() => nonBgColorMode = 'custom'} title={$t('colorCustom')} aria-label={$t('colorCustom')} class="h-8 px-2 flex items-center gap-1.5 rounded border text-xs transition-colors {nonBgColorMode === 'custom' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}">
+                          <span class="text-gray-700 dark:text-gray-200">{$t('colorCustom')}</span>
+                          <span class="w-5 h-5 rounded border border-gray-300" style={`background-color: ${normalizeHexColor(nonBgCustomHex)}`}></span>
+                        </button>
+                      </div>
+                      {#if nonBgColorMode === 'custom'}
+                        <div class="flex items-center gap-2">
+                          <input type="color" value={normalizeHexColor(nonBgCustomHex)} on:input={(e) => nonBgCustomHex = (e.currentTarget as HTMLInputElement).value} class="w-10 h-8 rounded border border-gray-300 dark:border-gray-600 bg-transparent p-0">
+                          <input type="text" bind:value={nonBgCustomHex} on:blur={() => nonBgCustomHex = normalizeHexColor(nonBgCustomHex)} placeholder="#FFFFFF" class="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1.5 text-xs font-mono text-gray-900 dark:text-white">
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+
+              <div class="relative">
+                <button
+                  type="button"
+                  on:click={toggleToolbarSubjectPopover}
+                  class="bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 text-gray-900 dark:text-white p-3 rounded-full shadow-xl border border-gray-200 dark:border-gray-600 backdrop-blur-sm transition-all active:scale-90 select-none"
+                  title={$t('mainSubject')}
+                  aria-label={$t('mainSubject')}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M4 22c0-4.4 3.6-8 8-8s8 3.6 8 8"></path></svg>
+                </button>
+                {#if showToolbarSubjectPopover}
+                  <div class="absolute top-14 right-0 w-80 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95 backdrop-blur-md shadow-2xl p-3 flex flex-col gap-2">
+                    <div class="text-xs font-semibold text-gray-700 dark:text-gray-200">{$t('mainSubject')}</div>
+                    {#if !imagePath}
+                      <span class="text-xs text-gray-500 dark:text-gray-400">-</span>
+                    {:else if subjectStatus === 'detecting'}
+                      <span class="text-xs text-blue-600 dark:text-blue-400">{$t('detectingSubject')}</span>
+                    {:else if subjectStatus === 'ready'}
+                      <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{detectedSubject}</span>
+                    {:else if subjectStatus === 'no_api'}
+                      <span class="text-xs text-gray-500 dark:text-gray-400">{$t('noApiKeySubject')}</span>
+                    {:else}
+                      <span class="text-xs text-red-600 dark:text-red-400">{$t('subjectDetectFailed')}{subjectError ? `: ${subjectError}` : ''}</span>
+                    {/if}
+                    {#if imagePath}
+                      <input
+                        type="text"
+                        value={manualSubject}
+                        on:input={onSubjectInput}
+                        placeholder={$t('subjectPlaceholder')}
+                        class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded p-1.5 text-xs text-gray-900 dark:text-white transition-colors"
+                      />
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-[10px] text-gray-500 dark:text-gray-400 truncate">{$t('usingSubject')}: {promptSubject}</span>
+                        <button
+                          type="button"
+                          class="text-[10px] px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          on:mousedown|preventDefault
+                          on:click={useDetectedSubject}
+                          disabled={!detectedSubject}
+                        >
+                          {$t('useDetectedSubject')}
+                        </button>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+
+              {#if resultSrc}
+                <button
+                  on:mousedown={() => showOriginalInput = true}
+                  on:mouseup={() => showOriginalInput = false}
+                  on:mouseleave={() => showOriginalInput = false}
+                  on:touchstart={() => showOriginalInput = true}
+                  on:touchend={() => showOriginalInput = false}
+                  class="bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 text-gray-900 dark:text-white p-3 rounded-full shadow-xl border border-gray-200 dark:border-gray-600 backdrop-blur-sm transition-all active:scale-90 select-none"
+                  title={$t('holdToShowOriginal')}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                </button>
+              {/if}
+            </div>
+          </div>
         </div>
       {/if}
     </section>
@@ -1259,38 +1349,3 @@
     </div>
   {/if}
 </main>
-
-<style>
-  .toggle {
-    appearance: none;
-    width: 2rem;
-    height: 1rem;
-    background: #d1d5db; /* gray-300 */
-    border-radius: 1rem;
-    position: relative;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  
-  :global(.dark) .toggle {
-    background: #4b5563; /* gray-600 */
-  }
-
-  .toggle:checked {
-    background: #3b82f6;
-  }
-  .toggle::after {
-    content: '';
-    position: absolute;
-    top: 0.125rem;
-    left: 0.125rem;
-    width: 0.75rem;
-    height: 0.75rem;
-    background: white;
-    border-radius: 50%;
-    transition: left 0.2s;
-  }
-  .toggle:checked::after {
-    left: 1.125rem;
-  }
-</style>

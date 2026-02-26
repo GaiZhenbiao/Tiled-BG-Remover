@@ -28,8 +28,11 @@
   export let exportTiles: any[] = [];
   export let exportOverlays: any[] = [];
   export let exportRegularLayers: any[] = [];
+  export let boxLayers: any[] = [];
   export let boxGenerateMode: boolean = false;
+  export let boxAspectMode: string = '1:1';
   export let boxGenerateAspectRatio: number | null = 1;
+  export let promptSubject: string = '';
 
   let container: HTMLDivElement;
   let imgElement: HTMLImageElement;
@@ -41,7 +44,6 @@
   let previewBuildId = 0;
   let isSplitting = false;
   let isMerging = false;
-  let hoveredTileIndex: number | null = null;
   let zoom = 1;
   let isPanning = false;
   let panStartX = 0;
@@ -95,8 +97,10 @@
   let prevTol = tolerance;
   let hasActiveWorkers = false;
   let isRegionProcessing = false;
+  type RegionOverlayStatus = 'queued' | 'processing' | 'done' | 'error';
   type RegionOverlay = {
     id: number;
+    name: string;
     x: number;
     y: number;
     width: number;
@@ -105,9 +109,17 @@
     versions: string[];
     activeVersionIndex: number;
     visible: boolean;
+    status: RegionOverlayStatus;
+    errorMessage?: string;
+  };
+  type RegionQueueItem = {
+    layerId: number;
+    mode: 'create' | 'regenerate';
+    region: RegionRect;
   };
   let regionOverlays: RegionOverlay[] = [];
-  let regionOverlayList: Array<{ layer: RegionOverlay; index: number }> = [];
+  let regionQueue: RegionQueueItem[] = [];
+  let activeRegionWorkers = 0;
   let compositeRenderSeq = 0;
   const dataUrlImageCache = new Map<string, Promise<HTMLImageElement>>();
   const previewErrorKeys = new Set<string>();
@@ -125,6 +137,8 @@
   let boxH = 0;
   let prevBoxGenerateMode = false;
   let prevBoxGenerateAspectRatio: number | null = boxGenerateAspectRatio;
+  let selectionUiVisible = false;
+  let hoveredRegionLayerId: number | null = null;
   const MIN_SELECTION_SIZE = 20;
   let hasEditedSelectionBox = false;
   let prevResultSrcState = '';
@@ -172,9 +186,11 @@
   $: if (!boxGenerateMode && prevBoxGenerateMode) {
     isBoxDragging = false;
     boxDragType = '';
+    selectionUiVisible = false;
   }
   $: prevBoxGenerateMode = boxGenerateMode;
   $: prevBoxGenerateAspectRatio = boxGenerateAspectRatio;
+  $: isRegionProcessing = activeRegionWorkers > 0 || regionQueue.length > 0;
   
   $: if ((bgRemovalEnabled !== prevBG || keyColor !== prevKey || tolerance !== prevTol) && tiles.length > 0 && tiles.some(t => t.status === 'done') && !isProcessing && !isMerging) {
       prevBG = bgRemovalEnabled;
@@ -199,18 +215,35 @@
   $: exportOverlays = regionOverlays
     .map((layer, index) => ({
       id: Number(layer.id) || 0,
+      name: (layer.name || '').trim(),
       x: Math.round(layer.x),
       y: Math.round(layer.y),
       width: Math.max(1, Math.round(layer.width)),
       height: Math.max(1, Math.round(layer.height)),
       dataUrl: getRegionOverlayActiveDataUrl(layer),
+      activeVersionIndex: getRegionOverlayActiveVersionIndex(layer),
       layerOrder: index,
       visible: layer.visible !== false
     }))
-    .filter((layer) => layer.visible !== false);
-  $: regionOverlayList = regionOverlays
-    .map((layer, index) => ({ layer, index }))
-    .sort((a, b) => b.index - a.index);
+    .filter((layer) => !!layer.dataUrl);
+  $: boxLayers = regionOverlays
+    .map((layer, index) => {
+      const versions = getRegionOverlayVersions(layer);
+      const activeVersionIndex = getRegionOverlayActiveVersionIndex(layer);
+      return {
+        id: Number(layer.id) || 0,
+        name: (layer.name || '').trim(),
+        width: Math.max(1, Math.round(layer.width)),
+        height: Math.max(1, Math.round(layer.height)),
+        visible: layer.visible !== false,
+        status: (layer.status || 'done') as RegionOverlayStatus,
+        errorMessage: layer.errorMessage || '',
+        versionCount: versions.length,
+        activeVersionIndex,
+        layerOrder: index
+      };
+    })
+    .sort((a, b) => b.layerOrder - a.layerOrder);
   $: exportRegularLayers = tiles
     .filter((tile) => !!tile.previewDataUrl)
     .map((tile, index) => ({
@@ -232,6 +265,36 @@
   $: if (pendingFitOnLoad && containerW > 0 && containerH > 0 && originalW > 0 && originalH > 0) {
     fitToViewport();
     pendingFitOnLoad = false;
+  }
+  $: if (regionQueue.length > 0 && activeRegionWorkers < Math.max(1, concurrency)) {
+    pumpRegionQueue();
+  }
+
+  function handleBoxAspectModeChange(event: Event) {
+    const mode = (event.currentTarget as HTMLSelectElement).value;
+    dispatch('box_aspect_mode_change', mode);
+  }
+
+  function handleSelectionSubjectInput(event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    dispatch('subject_input', value);
+  }
+
+  function handleSelectionGenerateClick(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    generateSelectionTiles();
+  }
+
+  function cancelSelectionDrawing(event?: MouseEvent) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    isBoxDragging = false;
+    boxDragType = '';
+    selectionUiVisible = false;
+    hasEditedSelectionBox = false;
   }
 
   async function loadImage(path: string) {
@@ -295,6 +358,7 @@
       tile.originalPath = '';
       tile.renderOrder = tile.r * 1000 + tile.c;
     }
+    regionQueue = [];
     regionOverlays = [];
     tiles = [...tiles];
     scheduleCompositePreviewRender();
@@ -884,6 +948,12 @@
   }
 
   function handleKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && selectionUiVisible) {
+      event.preventDefault();
+      cancelSelectionDrawing();
+      return;
+    }
+
     if (event.key === ' ') {
       isSpacePressed = true;
       event.preventDefault();
@@ -977,7 +1047,10 @@
   }
 
   function startSelectionDrag(event: MouseEvent, dragType: string) {
-    if (!boxGenerateMode || isSplitting || isMerging || isProcessing || isRegionProcessing) return;
+    if (!boxGenerateMode || isSplitting || isMerging || isProcessing) return;
+    if (dragType === 'new') {
+      selectionUiVisible = true;
+    }
     const sourceEl = event.currentTarget as HTMLElement;
     const overlay =
       sourceEl.dataset.boxOverlay === '1'
@@ -1108,12 +1181,7 @@
     boxDragType = '';
   }
 
-  function cancelBoxGenerateMode() {
-    stopSelectionDrag();
-    dispatch('box_generate_mode_change', false);
-  }
-
-  function toggleRegionOverlayVisibility(layerId: number) {
+  export function toggleRegionOverlayVisibility(layerId: number) {
     let changed = false;
     regionOverlays = regionOverlays.map((layer) => {
       if (layer.id !== layerId) return layer;
@@ -1125,7 +1193,8 @@
     }
   }
 
-  function deleteRegionOverlay(layerId: number) {
+  export function deleteRegionOverlay(layerId: number) {
+    regionQueue = regionQueue.filter((item) => item.layerId !== layerId);
     const before = regionOverlays.length;
     regionOverlays = regionOverlays.filter((layer) => layer.id !== layerId);
     if (regionOverlays.length !== before) {
@@ -1137,7 +1206,7 @@
     }
   }
 
-  function setRegionOverlayVersion(layerId: number, versionIndex: number) {
+  export function setRegionOverlayVersion(layerId: number, versionIndex: number) {
     let changed = false;
     regionOverlays = regionOverlays.map((layer) => {
       if (layer.id !== layerId) return layer;
@@ -1158,16 +1227,52 @@
     }
   }
 
-  function isTileIntersectingSelection(tile: any): boolean {
-    const x1 = tile.x;
-    const y1 = tile.y;
-    const x2 = tile.x + tile.w;
-    const y2 = tile.y + tile.h;
-    const bx1 = boxX;
-    const by1 = boxY;
-    const bx2 = boxX + boxW;
-    const by2 = boxY + boxH;
-    return x1 < bx2 && x2 > bx1 && y1 < by2 && y2 > by1;
+  export function reorderRegionOverlayById(
+    draggedId: number,
+    targetId: number,
+    position: 'before' | 'after' = 'before'
+  ) {
+    if (draggedId === targetId) return;
+    const list = [...regionOverlays];
+    const fromIndex = list.findIndex((layer) => layer.id === draggedId);
+    const toIndex = list.findIndex((layer) => layer.id === targetId);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const [dragged] = list.splice(fromIndex, 1);
+    const targetIndexAfterRemoval = list.findIndex((layer) => layer.id === targetId);
+    if (targetIndexAfterRemoval < 0) return;
+    const insertIndex = position === 'after' ? targetIndexAfterRemoval + 1 : targetIndexAfterRemoval;
+    list.splice(insertIndex, 0, dragged);
+    regionOverlays = list;
+    scheduleCompositePreviewRender();
+  }
+
+  export function moveRegionOverlayById(layerId: number, direction: 'up' | 'down') {
+    const list = [...regionOverlays];
+    const index = list.findIndex((layer) => layer.id === layerId);
+    if (index < 0) return;
+    const targetIndex = direction === 'up' ? index + 1 : index - 1;
+    if (targetIndex < 0 || targetIndex >= list.length) return;
+    [list[index], list[targetIndex]] = [list[targetIndex], list[index]];
+    regionOverlays = list;
+    scheduleCompositePreviewRender();
+  }
+
+  export function setHoveredRegionOverlay(layerId: number | null) {
+    hoveredRegionLayerId = Number.isFinite(layerId as number) ? (layerId as number) : null;
+  }
+
+  export function renameRegionOverlay(layerId: number, name: string) {
+    let changed = false;
+    const nextName = (name || '').trim();
+    regionOverlays = regionOverlays.map((layer) => {
+      if (layer.id !== layerId) return layer;
+      changed = true;
+      return { ...layer, name: nextName };
+    });
+    if (changed) {
+      regionOverlays = [...regionOverlays];
+    }
   }
 
   $: if (
@@ -1580,50 +1685,32 @@
     }
   }
   
-  async function regenerateTile(index: number) {
-    const tile = tiles[index];
-    if (tile) {
-      updateStatus(
-        String($t('generatingTileStatus')),
-        `${String($t('statusTile'))} ${tile.r},${tile.c}`,
-        null
-      );
-    }
-    try {
-      if (!tile) return;
-      await processTileByKey({ r: tile.r, c: tile.c });
-      scheduleCompositePreviewRender();
-    } finally {
+  function updateRegionQueueStatus() {
+    const queuedCount = regionQueue.length;
+    const activeCount = activeRegionWorkers;
+    if (queuedCount <= 0 && activeCount <= 0) {
       clearStatus();
+      return;
     }
+    updateStatus(
+      String($t('generatingSelectionRegionStatus')),
+      `${String($t('statusCompleted'))}: ${activeCount} | ${String($t('layerQueued'))}: ${queuedCount}`,
+      null
+    );
   }
 
-  async function regenerateRegionOverlay(layerId: number) {
-    if (isProcessing || isSplitting || isMerging || isRegionProcessing) return;
+  async function processRegionQueueItem(job: RegionQueueItem) {
+    const { layerId, mode, region } = job;
     const existingLayer = regionOverlays.find((layer) => layer.id === layerId);
     if (!existingLayer) return;
 
-    const region: RegionRect = {
-      x: Math.round(existingLayer.x),
-      y: Math.round(existingLayer.y),
-      width: Math.max(1, Math.round(existingLayer.width)),
-      height: Math.max(1, Math.round(existingLayer.height))
-    };
+    regionOverlays = regionOverlays.map((layer) =>
+      layer.id !== layerId ? layer : { ...layer, status: 'processing', errorMessage: '' }
+    );
+    updateRegionQueueStatus();
 
     try {
-      isRegionProcessing = true;
-      updateStatus(
-        String($t('generatingSelectionRegionStatus')),
-        `${String($t('statusRegion'))} ${region.width}x${region.height}`,
-        10
-      );
       const resultB64 = await generateRegionOverlayDataUrl(region);
-      updateStatus(
-        String($t('applyingSelectionOverlayStatus')),
-        `${String($t('statusRegion'))} ${region.width}x${region.height}`,
-        90
-      );
-
       let generatedVersion = 1;
       regionOverlays = regionOverlays.map((layer) => {
         if (layer.id !== layerId) return layer;
@@ -1634,95 +1721,112 @@
           ...layer,
           versions,
           activeVersionIndex,
-          dataUrl: versions[activeVersionIndex]
+          dataUrl: versions[activeVersionIndex],
+          status: 'done',
+          errorMessage: ''
         };
       });
 
       scheduleCompositePreviewRender();
       dispatch('log', {
         type: 'success',
-        message: `Regenerated box layer ${layerId} (v${generatedVersion}).`
+        message:
+          mode === 'regenerate'
+            ? `Regenerated box layer ${layerId} (v${generatedVersion}).`
+            : 'Selection-box generation complete.'
       });
     } catch (e: any) {
+      regionOverlays = regionOverlays.map((layer) =>
+        layer.id !== layerId
+          ? layer
+          : { ...layer, status: 'error', errorMessage: e?.message || String(e) }
+      );
       dispatch('log', {
         type: 'error',
-        message: `Box layer regeneration failed: ${e?.message || e}`
+        message:
+          mode === 'regenerate'
+            ? `Box layer regeneration failed: ${e?.message || e}`
+            : `Selection-box generation failed: ${e?.message || e}`
       });
     } finally {
-      isRegionProcessing = false;
-      clearStatus();
+      scheduleCompositePreviewRender();
     }
   }
 
-  async function generateSelectionTiles() {
-    if (!boxGenerateMode) return;
-    if (isProcessing || isSplitting || isMerging || isRegionProcessing) return;
+  function pumpRegionQueue() {
+    const workerLimit = Math.max(1, concurrency);
+    while (activeRegionWorkers < workerLimit && regionQueue.length > 0) {
+      const job = regionQueue.shift();
+      if (!job) break;
 
-    try {
-      isRegionProcessing = true;
-      updateStatus(String($t('preparingSelectionStatus')), '', null);
-      if (!hasEditedSelectionBox) {
-        throw new Error('Please draw or adjust the selection box before generating.');
-      }
+      activeRegionWorkers += 1;
+      updateRegionQueueStatus();
 
-      const selectedIndices = tiles
-        .map((tile, index) => (isTileIntersectingSelection(tile) ? index : -1))
-        .filter((index) => index >= 0);
-
-      if (selectedIndices.length === 0) {
-        throw new Error('No tiles overlap with the selected box.');
-      }
-      const region = {
-        x: Math.round(boxX),
-        y: Math.round(boxY),
-        width: Math.max(1, Math.round(boxW)),
-        height: Math.max(1, Math.round(boxH))
-      };
-      updateStatus(
-        String($t('generatingSelectionRegionStatus')),
-        `${String($t('statusRegion'))} ${region.width}x${region.height}`,
-        10
-      );
-
-      dispatch('log', {
-        type: 'info',
-        message: 'Generating one continuous region overlay...'
+      void processRegionQueueItem(job).finally(() => {
+        activeRegionWorkers = Math.max(0, activeRegionWorkers - 1);
+        updateRegionQueueStatus();
+        pumpRegionQueue();
       });
-      const resultB64 = await generateRegionOverlayDataUrl(region);
-      updateStatus(
-        String($t('applyingSelectionOverlayStatus')),
-        `${String($t('statusRegion'))} ${region.width}x${region.height}`,
-        90
-      );
-
-      regionOverlays = [
-        ...regionOverlays,
-        {
-          id: Date.now(),
-          x: region.x,
-          y: region.y,
-          width: region.width,
-          height: region.height,
-          dataUrl: resultB64,
-          versions: [resultB64],
-          activeVersionIndex: 0,
-          visible: true
-        }
-      ];
-      scheduleCompositePreviewRender();
-      dispatch('log', {
-        type: 'success',
-        message: 'Selection-box generation complete.'
-      });
-    } catch (e: any) {
-      dispatch('log', {
-        type: 'error',
-        message: `Selection-box generation failed: ${e?.message || e}`
-      });
-    } finally {
-      isRegionProcessing = false;
-      clearStatus();
     }
+  }
+
+  export function regenerateRegionOverlay(layerId: number) {
+    if (isProcessing || isSplitting || isMerging) return;
+    const existingLayer = regionOverlays.find((layer) => layer.id === layerId);
+    if (!existingLayer) return;
+
+    const region: RegionRect = {
+      x: Math.round(existingLayer.x),
+      y: Math.round(existingLayer.y),
+      width: Math.max(1, Math.round(existingLayer.width)),
+      height: Math.max(1, Math.round(existingLayer.height))
+    };
+    regionOverlays = regionOverlays.map((layer) =>
+      layer.id !== layerId ? layer : { ...layer, status: 'queued', errorMessage: '' }
+    );
+    regionQueue = [...regionQueue, { layerId, mode: 'regenerate', region }];
+    updateRegionQueueStatus();
+    pumpRegionQueue();
+  }
+
+  export function generateSelectionTiles() {
+    if (!boxGenerateMode) return;
+    if (isProcessing || isSplitting || isMerging) return;
+    if (originalW <= 0 || originalH <= 0) return;
+
+    const region = {
+      x: Math.max(0, Math.round(boxX)),
+      y: Math.max(0, Math.round(boxY)),
+      width: Math.max(1, Math.round(boxW)),
+      height: Math.max(1, Math.round(boxH))
+    };
+    const layerId = Date.now() + Math.floor(Math.random() * 100000);
+    regionOverlays = [
+      ...regionOverlays,
+      {
+        id: layerId,
+        name: `Layer ${regionOverlays.length + 1}`,
+        x: region.x,
+        y: region.y,
+        width: region.width,
+        height: region.height,
+        dataUrl: '',
+        versions: [],
+        activeVersionIndex: 0,
+        visible: true,
+        status: 'queued',
+        errorMessage: ''
+      }
+    ];
+    regionQueue = [...regionQueue, { layerId, mode: 'create', region }];
+    dispatch('log', {
+      type: 'info',
+      message: `Queued selection box layer ${layerId}.`
+    });
+    selectionUiVisible = false;
+    hasEditedSelectionBox = false;
+    updateRegionQueueStatus();
+    pumpRegionQueue();
   }
 
   onDestroy(() => {
@@ -1830,38 +1934,96 @@
            {#if boxGenerateMode}
              <!-- svelte-ignore a11y_no_static_element_interactions -->
              <div
-               class="absolute inset-0 z-40"
+               class="absolute inset-0 z-40 cursor-crosshair"
                data-box-overlay="1"
                on:mousedown={(e) => startSelectionDrag(e, 'new')}
                on:mousemove={updateSelectionDrag}
                on:mouseup={stopSelectionDrag}
                on:mouseleave={stopSelectionDrag}
              >
-               <div class="absolute inset-0 bg-blue-900/10 border border-blue-400/25 pointer-events-none"></div>
-               <!-- svelte-ignore a11y_no_static_element_interactions -->
-               <div
-                 class="absolute border-2 border-blue-400 bg-blue-500/10 shadow-[0_0_0_9999px_rgba(15,23,42,0.28)]"
-                 style="left: {boxX / originalW * 100}%; top: {boxY / originalH * 100}%; width: {boxW / originalW * 100}%; height: {boxH / originalH * 100}%;"
-                 on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'move')}
-               >
-                 <div class="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/70 text-white text-[10px] px-2 py-0.5 rounded pointer-events-none whitespace-nowrap font-mono">
-                   {Math.round(boxW)} x {Math.round(boxH)}
+               {#if selectionUiVisible}
+                 <div class="absolute inset-0 bg-blue-900/10 border border-blue-400/25 pointer-events-none"></div>
+                 <!-- svelte-ignore a11y_no_static_element_interactions -->
+                 <div
+                   class="absolute border-2 border-blue-400 bg-blue-500/10 shadow-[0_0_0_9999px_rgba(15,23,42,0.28)]"
+                   style="left: {boxX / originalW * 100}%; top: {boxY / originalH * 100}%; width: {boxW / originalW * 100}%; height: {boxH / originalH * 100}%;"
+                   on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'move')}
+                 >
+                   <div class="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/70 text-white text-[10px] px-2 py-0.5 rounded pointer-events-none whitespace-nowrap font-mono">
+                     {Math.round(boxW)} x {Math.round(boxH)}
+                   </div>
+                   <div class="absolute -left-1.5 -top-1.5 w-3 h-3 bg-white border border-blue-600 cursor-nw-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'nw')}></div>
+                   <div class="absolute -right-1.5 -top-1.5 w-3 h-3 bg-white border border-blue-600 cursor-ne-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'ne')}></div>
+                   <div class="absolute -left-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-sw-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'sw')}></div>
+                   <div class="absolute -right-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-se-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'se')}></div>
+
+                   <div class="absolute left-0 top-full mt-2 w-[320px] max-w-[86vw] rounded-lg border border-blue-200 dark:border-blue-700/60 bg-white/95 dark:bg-gray-900/90 backdrop-blur-sm shadow-xl p-2.5 flex flex-col gap-2 pointer-events-auto" on:mousedown|stopPropagation>
+                     <div class="flex items-center gap-2">
+                       <label for="selection-subject-input" class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider shrink-0">{$t('subjectForPrompt')}</label>
+                       <input
+                         id="selection-subject-input"
+                         type="text"
+                         value={promptSubject}
+                         on:input={handleSelectionSubjectInput}
+                         placeholder={$t('subjectPlaceholder')}
+                         class="flex-1 min-w-0 h-8 px-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-white"
+                       />
+                     </div>
+                     <div class="flex items-center gap-2">
+                       <select
+                         class="h-8 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-white px-2"
+                         value={boxAspectMode}
+                         on:change={handleBoxAspectModeChange}
+                         title={$t('boxAspectRatio')}
+                         aria-label={$t('boxAspectRatio')}
+                       >
+                         <option value="free">{$t('freeAspect')}</option>
+                         <option value="1:1">1:1</option>
+                         <option value="4:3">4:3</option>
+                         <option value="16:9">16:9</option>
+                         <option value="3:2">3:2</option>
+                         <option value="3:4">3:4</option>
+                         <option value="9:16">9:16</option>
+                       </select>
+                       <button
+                         type="button"
+                         class="h-8 px-3 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs font-semibold"
+                         on:mousedown|stopPropagation
+                         on:click={cancelSelectionDrawing}
+                       >
+                         {$t('settings.cancel')}
+                       </button>
+                       <button
+                         type="button"
+                         class="h-8 px-3 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold"
+                         on:mousedown|stopPropagation
+                         on:click={handleSelectionGenerateClick}
+                         disabled={isSplitting || isMerging || isProcessing}
+                       >
+                         {$t('generateInBox')}
+                       </button>
+                     </div>
+                   </div>
                  </div>
-                 <div class="absolute -left-1.5 -top-1.5 w-3 h-3 bg-white border border-blue-600 cursor-nw-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'nw')}></div>
-                 <div class="absolute -right-1.5 -top-1.5 w-3 h-3 bg-white border border-blue-600 cursor-ne-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'ne')}></div>
-                 <div class="absolute -left-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-sw-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'sw')}></div>
-                 <div class="absolute -right-1.5 -bottom-1.5 w-3 h-3 bg-white border border-blue-600 cursor-se-resize rounded-full shadow-sm" on:mousedown|stopPropagation={(e) => startSelectionDrag(e, 'se')}></div>
-               </div>
+               {/if}
              </div>
            {/if}
+
+           {#if hoveredRegionLayerId !== null}
+             {@const hoveredLayer = regionOverlays.find((layer) => layer.id === hoveredRegionLayerId)}
+             {#if hoveredLayer}
+               <div
+                 class="absolute pointer-events-none border-2 border-cyan-400 bg-cyan-400/15 rounded-[2px] shadow-[0_0_0_1px_rgba(34,211,238,0.25)] z-50"
+                 style="left: {hoveredLayer.x / originalW * 100}%; top: {hoveredLayer.y / originalH * 100}%; width: {hoveredLayer.width / originalW * 100}%; height: {hoveredLayer.height / originalH * 100}%;"
+               ></div>
+             {/if}
+           {/if}
            
-           {#each tiles as tile, index}
+           {#each tiles as tile}
              <!-- svelte-ignore a11y_no_static_element_interactions -->
              <div 
-               class="absolute group transition-all duration-200 border flex items-center justify-center cursor-default overflow-hidden {boxGenerateMode ? 'pointer-events-none' : ''} {hoveredTileIndex === index ? 'border-blue-400 bg-blue-500/30' : 'border-transparent hover:border-blue-400 hover:bg-blue-500/30'}"
+               class="absolute transition-all duration-200 border flex items-center justify-center cursor-default overflow-hidden pointer-events-none border-transparent"
                style="left: {tile.x / originalW * 100}%; top: {tile.y / originalH * 100}%; width: {tile.w / originalW * 100}%; height: {tile.h / originalH * 100}%;"
-               on:mouseenter={() => hoveredTileIndex = index}
-               on:mouseleave={() => hoveredTileIndex = hoveredTileIndex === index ? null : hoveredTileIndex}
              >
                 {#if tile.status === 'processing'}
                   <div class="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-[1px]">
@@ -1881,16 +2043,6 @@
                       </div>
                     </div>
                   {/if}
-
-                  {#if hoveredTileIndex === index && !boxGenerateMode}
-                  <button 
-                    on:click|stopPropagation={() => regenerateTile(index)}
-                    class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg transition-all duration-150 ease-out z-40 cursor-pointer disabled:cursor-not-allowed"
-                    disabled={isSplitting || isMerging || isProcessing || isRegionProcessing}
-                  >
-                    {tile.status === 'pending' ? $t('generate') : $t('regenerate')}
-                  </button>
-                  {/if}
                 {/if}
              </div>
            {/each}
@@ -1901,114 +2053,6 @@
     </div>
   {/if}
 
-  {#if boxGenerateMode && displaySrc}
-    <div
-      class="fixed z-40 w-72 rounded-xl border border-white/20 bg-black/55 text-white shadow-xl backdrop-blur-md pointer-events-auto"
-      style="top: 7.6rem; right: 1rem;"
-    >
-      <div class="px-3 py-2 border-b border-white/15 flex items-center justify-between">
-        <span class="text-xs font-semibold uppercase tracking-wide">{$t('boxLayers')}</span>
-        <span class="text-[10px] text-white/70">{regionOverlays.length}</span>
-      </div>
-
-      <div class="max-h-56 overflow-y-auto px-2 py-2 space-y-1">
-        {#if regionOverlayList.length === 0}
-          <div class="px-2 py-3 text-[11px] text-white/65 text-center">
-            {$t('noBoxLayers')}
-          </div>
-        {:else}
-          {#each regionOverlayList as entry}
-            <div class="flex items-center gap-2 px-2 py-1.5 rounded-md bg-white/8 border border-white/10">
-              <span class="text-[11px] font-mono text-white/90 truncate flex-1">
-                {$t('layer')} {entry.index + 1} ({Math.round(entry.layer.width)}x{Math.round(entry.layer.height)})
-              </span>
-              <select
-                value={getRegionOverlayActiveVersionIndex(entry.layer)}
-                on:change={(e) => setRegionOverlayVersion(entry.layer.id, parseInt((e.currentTarget as HTMLSelectElement).value))}
-                class="h-7 rounded-md border border-white/20 bg-black/35 text-[10px] px-1 text-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                title={$t('layerVersion')}
-                aria-label={$t('layerVersion')}
-              >
-                {#each getRegionOverlayVersions(entry.layer) as _version, versionIndex}
-                  <option value={versionIndex}>v{versionIndex + 1}</option>
-                {/each}
-              </select>
-              <button
-                type="button"
-                on:mousedown|stopPropagation
-                on:click|stopPropagation={() => regenerateRegionOverlay(entry.layer.id)}
-                disabled={isSplitting || isMerging || isProcessing || isRegionProcessing}
-                class="h-7 w-7 inline-flex items-center justify-center rounded-md border border-blue-300/35 text-blue-100 hover:bg-blue-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title={$t('regenerate')}
-                aria-label={$t('regenerate')}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M21 2v6h-6"></path>
-                  <path d="M3 12a9 9 0 0 1 15.5-6.36L21 8"></path>
-                  <path d="M3 22v-6h6"></path>
-                  <path d="M21 12a9 9 0 0 1-15.5 6.36L3 16"></path>
-                </svg>
-              </button>
-              <button
-                type="button"
-                on:mousedown|stopPropagation
-                on:click|stopPropagation={() => toggleRegionOverlayVisibility(entry.layer.id)}
-                class="h-7 w-7 inline-flex items-center justify-center rounded-md border border-white/15 hover:bg-white/10 transition-colors"
-                title={entry.layer.visible === false ? $t('settings.show') : $t('settings.hide')}
-                aria-label={entry.layer.visible === false ? $t('settings.show') : $t('settings.hide')}
-              >
-                {#if entry.layer.visible === false}
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.89 1 12c.73-2.07 1.96-3.86 3.5-5.22"></path>
-                    <path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.11 11 8a11.02 11.02 0 0 1-4.06 5.94"></path>
-                    <line x1="1" y1="1" x2="23" y2="23"></line>
-                  </svg>
-                {:else}
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                  </svg>
-                {/if}
-              </button>
-              <button
-                type="button"
-                on:mousedown|stopPropagation
-                on:click|stopPropagation={() => deleteRegionOverlay(entry.layer.id)}
-                class="h-7 w-7 inline-flex items-center justify-center rounded-md border border-red-300/25 text-red-200 hover:bg-red-500/20 transition-colors"
-                title={$t('deleteLayer')}
-                aria-label={$t('deleteLayer')}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="3 6 5 6 21 6"></polyline>
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                </svg>
-              </button>
-            </div>
-          {/each}
-        {/if}
-      </div>
-
-      <div class="px-3 py-2 border-t border-white/15 flex items-center gap-2">
-        <button
-          type="button"
-          on:mousedown|stopPropagation
-          on:click|stopPropagation={cancelBoxGenerateMode}
-          class="flex-1 px-3 py-1.5 rounded-md bg-black/45 hover:bg-black/60 text-white text-xs font-semibold border border-white/20"
-        >
-          {$t('done')}
-        </button>
-        <button
-          type="button"
-          on:mousedown|stopPropagation
-          on:click|stopPropagation={generateSelectionTiles}
-          disabled={isSplitting || isMerging || isProcessing || isRegionProcessing}
-          class="flex-1 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold"
-        >
-          {$t('generateInBox')}
-        </button>
-      </div>
-    </div>
-  {/if}
 </div>
 
 <style>

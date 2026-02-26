@@ -403,16 +403,19 @@ Return only the generated tile image.`;
           <code>{'{tile_height}'}</code>, <code>{'{image_width}'}</code>, <code>{'{image_height}'}</code>.
         </p>
       </div>
+
+      <div class="pt-1">
+        <button
+          type="button"
+          on:click={restoreAllDefaults}
+          class="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline underline-offset-2 transition-colors"
+        >
+          {$t('settings.restoreAllDefaults')}
+        </button>
+      </div>
     </div>
 
     <div class="flex justify-end gap-2 mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 transition-colors">
-      <button
-        type="button"
-        on:click={restoreAllDefaults}
-        class="mr-auto bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded transition-colors"
-      >
-        {$t('settings.restoreAllDefaults')}
-      </button>
       <button on:click={() => dispatch('close')} class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded transition-colors">{$t('settings.cancel')}</button>
       <button on:click={save} class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded shadow-lg transition-colors">{$t('settings.save')}</button>
     </div>

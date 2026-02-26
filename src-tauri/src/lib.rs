@@ -346,11 +346,15 @@ struct ExportTile {
 #[serde(rename_all = "camelCase")]
 struct ExportOverlay {
     id: u64,
+    #[serde(default)]
+    name: Option<String>,
     x: u32,
     y: u32,
     width: u32,
     height: u32,
     data_url: String,
+    #[serde(default)]
+    active_version_index: u64,
     #[serde(default)]
     layer_order: u64,
 }
@@ -608,10 +612,19 @@ fn write_psd(
     }
 
     for (idx, layer) in overlay_layers.iter().enumerate() {
+        let overlay_name = layer
+            .overlay
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| format!("Generate In Box Overlay {}", idx + 1));
         let mut psd_layer = Layer::new(format!(
-            "Generate In Box Overlay {} ({})",
-            idx + 1,
-            layer.overlay.id
+            "{} ({}, v{})",
+            overlay_name,
+            layer.overlay.id,
+            layer.overlay.active_version_index + 1
         ));
         psd_layer
             .set_image(
