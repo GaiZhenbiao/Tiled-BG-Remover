@@ -609,8 +609,11 @@
     if (cachedFullImageBlob && cachedFullImageSrc === displaySrc) {
       return cachedFullImageBlob;
     }
-    const response = await fetch(displaySrc);
-    const blob = await response.blob();
+    const parsed = parseMergedImage(displaySrc);
+    if (!parsed) {
+      throw new Error('Failed to decode source image data.');
+    }
+    const blob = base64ToBlob(parsed.base64, parsed.mime || 'image/jpeg');
     cachedFullImageBlob = blob;
     cachedFullImageSrc = displaySrc;
     return blob;
@@ -679,6 +682,14 @@
       chunks.push(bytes);
     }
     return new Blob(chunks, { type: mime || 'image/png' });
+  }
+
+  function dataUrlToBlob(dataUrl: string, fallbackMime = 'image/png'): Blob {
+    const parsed = parseMergedImage(dataUrl);
+    if (!parsed) {
+      throw new Error('Invalid image data URL.');
+    }
+    return base64ToBlob(parsed.base64, parsed.mime || fallbackMime);
   }
 
   function cleanupResultPreviewUrl() {
@@ -1333,11 +1344,7 @@
         region.height,
         true
       );
-      const regionResponse = await fetch(regionDataUrl);
-      if (!regionResponse.ok) {
-        throw new Error(`Failed to read region image (${regionResponse.status})`);
-      }
-      const croppedBlob = await regionResponse.blob();
+      const croppedBlob = dataUrlToBlob(regionDataUrl, 'image/jpeg');
 
       if (isVerboseLoggingEnabled()) {
         dispatch('log', {

@@ -347,6 +347,30 @@
     return match?.[1]?.toLowerCase() || 'image/jpeg';
   }
 
+  function dataUrlToBlob(dataUrl: string): Blob {
+    const match = (dataUrl || '').match(/^data:([^;]+);base64,(.+)$/i);
+    if (!match) {
+      throw new Error('Invalid image data URL.');
+    }
+    const mime = match[1] || 'image/jpeg';
+    let base64 = match[2] || '';
+    base64 = base64.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+    const mod = base64.length % 4;
+    if (mod) base64 += '='.repeat(4 - mod);
+    const binary = atob(base64);
+    const chunkSize = 0x8000;
+    const chunks: Uint8Array[] = [];
+    for (let i = 0; i < binary.length; i += chunkSize) {
+      const slice = binary.slice(i, i + chunkSize);
+      const bytes = new Uint8Array(slice.length);
+      for (let j = 0; j < slice.length; j++) {
+        bytes[j] = slice.charCodeAt(j);
+      }
+      chunks.push(bytes);
+    }
+    return new Blob(chunks, { type: mime });
+  }
+
   function extensionFromMime(mime: string): string {
     if (mime === 'image/png') return 'png';
     if (mime === 'image/webp') return 'webp';
@@ -679,8 +703,7 @@
     void (async () => {
       try {
         const b64 = (await invoke('load_image', { path })) as string;
-        const res = await fetch(b64);
-        const blob = await res.blob();
+        const blob = dataUrlToBlob(b64);
         const subject = await detectMainSubject(blob, apiKey, apiUrl);
         if (seq !== subjectDetectSeq) return;
         detectedSubject = subject || 'main subject';

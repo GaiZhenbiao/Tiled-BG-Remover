@@ -180,11 +180,16 @@ export async function generateImage(
     }
   };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (e: any) {
+    throw new Error(`Failed to reach AI API (${url}): ${e?.message || e}`);
+  }
 
   if (!response.ok) {
     const errText = await response.text();
@@ -229,11 +234,16 @@ export async function detectMainSubject(
       }
     };
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (e: any) {
+      throw new Error(`Failed to reach subject detection API (${url}): ${e?.message || e}`);
+    }
 
     if (!response.ok) {
       const errText = await response.text();
