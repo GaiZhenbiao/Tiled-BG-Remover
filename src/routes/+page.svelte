@@ -859,24 +859,24 @@
       {#if imagePath}
         <button
           on:click={() => showCropModal = true}
-          class="bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-white px-3 py-1 rounded text-sm flex items-center gap-2 border border-gray-300 dark:border-gray-600 transition-colors"
+          class="h-8 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-white px-3 rounded text-sm inline-flex items-center gap-2 border border-gray-300 dark:border-gray-600 transition-colors"
           title={$t('cropImage')}
           aria-label={$t('cropImage')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"></path><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"></path></svg>
         </button>
 
-        <button on:click={clearInput} class="bg-red-600/80 hover:bg-red-600 text-white px-3 py-1 rounded text-sm flex items-center gap-2" title="Clear Input Image">
+        <button on:click={clearInput} class="h-8 bg-red-600/80 hover:bg-red-600 text-white px-3 rounded text-sm inline-flex items-center gap-2" title="Clear Input Image">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
         </button>
       {/if}
 
       {#if resultSrc}
-        <button on:click={() => resultSrc = ''} class="bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-white px-3 py-1 rounded text-sm flex items-center gap-2 border border-gray-300 dark:border-gray-600 transition-colors">
+        <button on:click={() => resultSrc = ''} class="h-8 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-white px-3 rounded text-sm inline-flex items-center gap-2 border border-gray-300 dark:border-gray-600 transition-colors">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"></path><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
           {$t('revert')}
         </button>
-        <button on:click={saveResult} class="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm flex items-center gap-2">
+        <button on:click={saveResult} class="h-8 bg-green-600 hover:bg-green-500 text-white px-3 rounded text-sm inline-flex items-center gap-2">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
           {$t('save')}
         </button>
@@ -898,7 +898,7 @@
         <button
           type="button"
           on:click={toggleToolbarLogsPopover}
-          class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors border border-transparent"
+          class="h-8 w-8 inline-flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors border border-transparent"
           title={$t('logs')}
           aria-label={$t('logs')}
         >
@@ -926,7 +926,7 @@
       <button 
         aria-label="Settings"
         on:click={() => showSettings = true} 
-        class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
+        class="h-8 w-8 inline-flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
       </button>
@@ -1128,11 +1128,15 @@
                   <button
                     type="button"
                     on:click={toggleToolbarBackgroundPopover}
-                    class="bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 text-gray-900 dark:text-white p-3 rounded-full shadow-xl border border-gray-200 dark:border-gray-600 backdrop-blur-sm transition-all active:scale-90 select-none"
+                    class="relative bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 text-gray-900 dark:text-white p-3 rounded-full shadow-xl border border-gray-200 dark:border-gray-600 backdrop-blur-sm transition-all active:scale-90 select-none"
                     title={$t('backgroundColor')}
                     aria-label={$t('backgroundColor')}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m2 22 1-1h3l9-9"></path><path d="M3 21v-3L14 7l3 3-11 11H3Z"></path><path d="m14 7 1.5-1.5a2.12 2.12 0 1 1 3 3L17 10"></path></svg>
+                    <span
+                      class="absolute right-2 bottom-2 w-2.5 h-2.5 rounded-full border border-white/80 dark:border-gray-900/80 shadow-sm"
+                      style={`background-color: ${normalizeHexColor(nonBgBackgroundHex)};`}
+                    ></span>
                   </button>
                   {#if showToolbarBackgroundPopover}
                     <div class="absolute top-14 right-0 w-72 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95 backdrop-blur-md shadow-2xl p-3 flex flex-col gap-2">
