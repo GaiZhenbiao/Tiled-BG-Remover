@@ -8,6 +8,11 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { t } from '../lib/i18n';
   import { detectMainSubject } from '../lib/api';
+  import {
+    DEFAULT_IMAGE_GENERATION_MODELS,
+    ensureSelectedModelName,
+    readImageGenerationModels
+  } from '../lib/modelRegistry';
 
   const EXPORT_DEFAULTS_STORAGE_KEY = 'export_content_defaults';
   type ExportContentDefaults = {
@@ -49,7 +54,15 @@
   // Sidebar Tabs
   let activeTab = 'controls'; // 'controls' or 'logs'
   let logs: { type: string, message: string, time: string }[] = [];
-  let selectedModel = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
+  let selectedModel = ensureSelectedModelName(
+    readImageGenerationModels(),
+    localStorage.getItem('gemini_model') || DEFAULT_IMAGE_GENERATION_MODELS[0].name
+  );
+
+  function supportsHighResOutput(modelName: string): boolean {
+    const value = (modelName || '').toLowerCase();
+    return value.includes('gemini-3-pro') || value.includes('gemini-3.1-flash-image-preview');
+  }
   
   // State
   let rows = 2;
@@ -57,7 +70,7 @@
   let overlap = 0;
   let overlapXRatio = 0;
   let overlapYRatio = 0;
-  let aiOutputRes = selectedModel.includes('gemini-3-pro') ? 2048 : 1024;
+  let aiOutputRes = supportsHighResOutput(selectedModel) ? 2048 : 1024;
   let concurrency = 2;
   let smartGridEnabled = true;
   const smartGridMaxCount = 64;
@@ -157,6 +170,9 @@
     keyColor = localStorage.getItem('key_color') || 'green';
     tolerance = parseInt(localStorage.getItem('key_tolerance') || '10');
     alwaysSquareTiles = localStorage.getItem('always_square_tiles') === 'true';
+    const models = readImageGenerationModels();
+    selectedModel = ensureSelectedModelName(models, localStorage.getItem('gemini_model') || selectedModel);
+    localStorage.setItem('gemini_model', selectedModel);
   }
 
   function parseThemeMode(value: string | null): ThemeMode {
@@ -249,16 +265,17 @@
 
   // Re-check selected model when settings modal closes
   $: if (!showSettings) {
-    selectedModel = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
+    const models = readImageGenerationModels();
+    selectedModel = ensureSelectedModelName(models, localStorage.getItem('gemini_model') || selectedModel);
   }
 
   let previousModel = selectedModel;
   $: if (selectedModel !== previousModel) {
-    aiOutputRes = selectedModel.includes('gemini-3-pro') ? 2048 : 1024;
+    aiOutputRes = supportsHighResOutput(selectedModel) ? 2048 : 1024;
     previousModel = selectedModel;
   }
 
-  $: availableResolutions = selectedModel.includes('gemini-3-pro') 
+  $: availableResolutions = supportsHighResOutput(selectedModel)
     ? [1024, 2048, 4096] 
     : [1024];
 

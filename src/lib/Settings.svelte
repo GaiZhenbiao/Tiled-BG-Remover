@@ -1,6 +1,13 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { t, locale } from '../lib/i18n';
+  import {
+    DEFAULT_IMAGE_GENERATION_MODELS,
+    ensureSelectedModelName,
+    readImageGenerationModels,
+    writeImageGenerationModels,
+    type ImageGenerationModel
+  } from '../lib/modelRegistry';
   
   const dispatch = createEventDispatcher();
   
@@ -25,7 +32,11 @@ Return only the generated tile image.`;
   
   let apiKey = localStorage.getItem('gemini_api_key') || '';
   let apiUrl = localStorage.getItem('gemini_api_url') || 'https://generativelanguage.googleapis.com';
-  let modelName = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
+  let modelList: ImageGenerationModel[] = readImageGenerationModels();
+  let modelName = ensureSelectedModelName(
+    modelList,
+    localStorage.getItem('gemini_model') || DEFAULT_IMAGE_GENERATION_MODELS[0].name
+  );
   const legacyPromptTemplate =
     localStorage.getItem('gemini_prompt_template') ||
     localStorage.getItem('gemini_prompt') ||
@@ -46,7 +57,24 @@ Return only the generated tile image.`;
   let keyColorSetting = localStorage.getItem('key_color') || 'green';
   let toleranceSetting = parseInt(localStorage.getItem('key_tolerance') || '10');
   let showApiKey = false;
+  let modelCustomizationExpanded = false;
   const appVersion = __APP_VERSION__;
+  const DEFAULT_API_URL = 'https://generativelanguage.googleapis.com';
+
+  function getSystemLocale(): 'en' | 'zh' | 'ja' {
+    if (typeof navigator === 'undefined') return 'en';
+    const preferred =
+      navigator.languages && navigator.languages.length > 0
+        ? navigator.languages
+        : [navigator.language];
+    for (const lang of preferred) {
+      const value = (lang || '').toLowerCase();
+      if (value.startsWith('zh')) return 'zh';
+      if (value.startsWith('ja')) return 'ja';
+      if (value.startsWith('en')) return 'en';
+    }
+    return 'en';
+  }
 
   function restorePromptTemplateWithReference() {
     promptTemplateWithReference = DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE;
@@ -57,9 +85,11 @@ Return only the generated tile image.`;
   }
   
   function save() {
+    const sanitizedModels = writeImageGenerationModels(modelList);
+    const selectedModelName = ensureSelectedModelName(sanitizedModels, modelName);
     localStorage.setItem('gemini_api_key', apiKey.trim());
     localStorage.setItem('gemini_api_url', apiUrl.trim());
-    localStorage.setItem('gemini_model', modelName);
+    localStorage.setItem('gemini_model', selectedModelName);
     localStorage.setItem('gemini_prompt_template_with_reference', promptTemplateWithReference);
     localStorage.setItem('gemini_prompt_template_without_reference', promptTemplateWithoutReference);
     const activeTemplate = useFullImageReference ? promptTemplateWithReference : promptTemplateWithoutReference;
@@ -85,6 +115,68 @@ Return only the generated tile image.`;
     const target = e.target as HTMLInputElement;
     const v = parseInt(target.value);
     toleranceSetting = Number.isNaN(v) ? 10 : Math.min(100, Math.max(0, v));
+  }
+
+  function addModel() {
+    modelList = [
+      ...modelList,
+      {
+        nickname: `${String($t('settings.modelNickname'))} ${modelList.length + 1}`,
+        name: ''
+      }
+    ];
+  }
+
+  function removeModel(index: number) {
+    const removing = modelList[index];
+    modelList = modelList.filter((_model, i) => i !== index);
+    if (modelList.length === 0) {
+      modelList = DEFAULT_IMAGE_GENERATION_MODELS.map((model) => ({ ...model }));
+    }
+    if (removing?.name === modelName) {
+      modelName = ensureSelectedModelName(modelList, '');
+    }
+  }
+
+  function updateModelNickname(index: number, value: string) {
+    modelList = modelList.map((model, i) => (
+      i === index ? { ...model, nickname: value } : model
+    ));
+  }
+
+  function updateModelName(index: number, value: string) {
+    const nextName = value.trim();
+    const previousName = modelList[index]?.name || '';
+    modelList = modelList.map((model, i) => (
+      i === index ? { ...model, name: nextName } : model
+    ));
+    if (modelName === previousName) {
+      modelName = nextName;
+    }
+  }
+
+  function restoreDefaultModels() {
+    modelList = DEFAULT_IMAGE_GENERATION_MODELS.map((model) => ({ ...model }));
+    modelName = ensureSelectedModelName(modelList, modelName);
+  }
+
+  function restoreAllDefaults() {
+    apiKey = '';
+    apiUrl = DEFAULT_API_URL;
+    modelList = DEFAULT_IMAGE_GENERATION_MODELS.map((model) => ({ ...model }));
+    modelName = ensureSelectedModelName(modelList, DEFAULT_IMAGE_GENERATION_MODELS[0].name);
+    promptTemplateWithReference = DEFAULT_PROMPT_TEMPLATE_WITH_REFERENCE;
+    promptTemplateWithoutReference = DEFAULT_PROMPT_TEMPLATE_WITHOUT_REFERENCE;
+    operationMode = 'default';
+    verboseLogging = false;
+    useFullImageReference = false;
+    alwaysSquareTiles = false;
+    bgRemovalSetting = false;
+    keyColorSetting = 'green';
+    toleranceSetting = 10;
+    concurrency = 2;
+    theme = 'auto';
+    $locale = getSystemLocale();
   }
 </script>
 
@@ -205,12 +297,70 @@ Return only the generated tile image.`;
       </div>
 
       <div>
-        <label for="model-name" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{$t('settings.modelName')}</label>
+        <div class="mb-1 flex items-center justify-between gap-2">
+          <label for="model-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300">{$t('settings.modelName')}</label>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              on:click={() => (modelCustomizationExpanded = !modelCustomizationExpanded)}
+              class="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              aria-expanded={modelCustomizationExpanded}
+            >
+              {modelCustomizationExpanded ? $t('settings.hideModelCustomization') : $t('settings.customizeModels')}
+            </button>
+            <button
+              type="button"
+              on:click={restoreDefaultModels}
+              class="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              {$t('settings.restoreDefault')}
+            </button>
+          </div>
+        </div>
         <select id="model-name" bind:value={modelName} class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-gray-900 dark:text-white transition-colors">
-          <option value="gemini-2.5-flash-image">gemini-2.5-flash-image</option>
-          <option value="gemini-3-pro-image-preview">gemini-3-pro-image-preview</option>
+          {#each modelList as model}
+            <option value={model.name}>{model.nickname} ({model.name})</option>
+          {/each}
         </select>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{$t('settings.experimental')}</p>
+        {#if modelCustomizationExpanded}
+          <div class="mt-2 space-y-2 rounded border border-gray-200 dark:border-gray-700 p-2">
+            {#each modelList as model, index}
+              <div class="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                <input
+                  type="text"
+                  value={model.nickname}
+                  on:input={(e) => updateModelNickname(index, (e.currentTarget as HTMLInputElement).value)}
+                  placeholder={$t('settings.modelNickname')}
+                  class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-xs text-gray-900 dark:text-white transition-colors"
+                />
+                <input
+                  type="text"
+                  value={model.name}
+                  on:input={(e) => updateModelName(index, (e.currentTarget as HTMLInputElement).value)}
+                  placeholder={$t('settings.modelApiName')}
+                  class="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-xs text-gray-900 dark:text-white transition-colors"
+                />
+                <button
+                  type="button"
+                  on:click={() => removeModel(index)}
+                  class="h-9 px-2 text-xs rounded border border-red-300 dark:border-red-700 text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
+                  title={$t('settings.deleteModel')}
+                  aria-label={$t('settings.deleteModel')}
+                >
+                  {$t('settings.deleteModel')}
+                </button>
+              </div>
+            {/each}
+            <button
+              type="button"
+              on:click={addModel}
+              class="w-full text-xs px-2 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              {$t('settings.addModel')}
+            </button>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{$t('settings.experimental')}</p>
+        {/if}
       </div>
 
       <div>
@@ -256,6 +406,13 @@ Return only the generated tile image.`;
     </div>
 
     <div class="flex justify-end gap-2 mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 transition-colors">
+      <button
+        type="button"
+        on:click={restoreAllDefaults}
+        class="mr-auto bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded transition-colors"
+      >
+        {$t('settings.restoreAllDefaults')}
+      </button>
       <button on:click={() => dispatch('close')} class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded transition-colors">{$t('settings.cancel')}</button>
       <button on:click={save} class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded shadow-lg transition-colors">{$t('settings.save')}</button>
     </div>

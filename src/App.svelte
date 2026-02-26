@@ -14,6 +14,12 @@
   // Sidebar Tabs
   let activeTab = 'controls'; // 'controls' or 'logs'
   let logs: { type: string, message: string, time: string }[] = [];
+  let selectedModel = localStorage.getItem('gemini_model') || 'gemini-1.5-pro';
+
+  function supportsHighResOutput(modelName: string): boolean {
+    const value = (modelName || '').toLowerCase();
+    return value.includes('gemini-3-pro') || value.includes('gemini-3.1-flash-image-preview');
+  }
   
   // State
   let rows = 2;
@@ -66,7 +72,7 @@
 
   $: selectedModel = localStorage.getItem('gemini_model') || 'gemini-1.5-pro';
   
-  $: availableResolutions = selectedModel.includes('gemini-3-pro') 
+  $: availableResolutions = supportsHighResOutput(selectedModel)
     ? [1024, 2048, 4096] 
     : [1024];
 

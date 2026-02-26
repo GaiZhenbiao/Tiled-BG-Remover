@@ -102,6 +102,8 @@
     width: number;
     height: number;
     dataUrl: string;
+    versions: string[];
+    activeVersionIndex: number;
     visible: boolean;
   };
   let regionOverlays: RegionOverlay[] = [];
@@ -194,16 +196,18 @@
       originalPath: tile.originalPath || '',
       status: tile.status || 'pending'
     }));
-  $: exportOverlays = regionOverlays.map((layer, index) => ({
-    id: Number(layer.id) || 0,
-    x: Math.round(layer.x),
-    y: Math.round(layer.y),
-    width: Math.max(1, Math.round(layer.width)),
-    height: Math.max(1, Math.round(layer.height)),
-    dataUrl: layer.dataUrl || '',
-    layerOrder: index,
-    visible: layer.visible !== false
-  })).filter((layer) => layer.visible !== false);
+  $: exportOverlays = regionOverlays
+    .map((layer, index) => ({
+      id: Number(layer.id) || 0,
+      x: Math.round(layer.x),
+      y: Math.round(layer.y),
+      width: Math.max(1, Math.round(layer.width)),
+      height: Math.max(1, Math.round(layer.height)),
+      dataUrl: getRegionOverlayActiveDataUrl(layer),
+      layerOrder: index,
+      visible: layer.visible !== false
+    }))
+    .filter((layer) => layer.visible !== false);
   $: regionOverlayList = regionOverlays
     .map((layer, index) => ({ layer, index }))
     .sort((a, b) => b.index - a.index);
@@ -294,6 +298,26 @@
     regionOverlays = [];
     tiles = [...tiles];
     scheduleCompositePreviewRender();
+  }
+
+  function getRegionOverlayVersions(layer: RegionOverlay): string[] {
+    if (Array.isArray(layer.versions) && layer.versions.length > 0) {
+      return layer.versions.filter((item) => typeof item === 'string' && item.length > 0);
+    }
+    return layer.dataUrl ? [layer.dataUrl] : [];
+  }
+
+  function getRegionOverlayActiveVersionIndex(layer: RegionOverlay): number {
+    const versions = getRegionOverlayVersions(layer);
+    if (versions.length === 0) return 0;
+    const idx = Number.isFinite(layer.activeVersionIndex) ? Number(layer.activeVersionIndex) : versions.length - 1;
+    return Math.max(0, Math.min(versions.length - 1, idx));
+  }
+
+  function getRegionOverlayActiveDataUrl(layer: RegionOverlay): string {
+    const versions = getRegionOverlayVersions(layer);
+    if (versions.length === 0) return '';
+    return versions[getRegionOverlayActiveVersionIndex(layer)] || '';
   }
 
   function createFeatheredTileCanvas(tile: any, img: HTMLImageElement): HTMLCanvasElement {
@@ -426,7 +450,9 @@
       if (layer.visible === false) continue;
       if (renderSeq !== compositeRenderSeq) return;
       try {
-        const img = await loadImageFromDataUrl(layer.dataUrl);
+        const overlayDataUrl = getRegionOverlayActiveDataUrl(layer);
+        if (!overlayDataUrl) continue;
+        const img = await loadImageFromDataUrl(overlayDataUrl);
         if (renderSeq !== compositeRenderSeq) return;
         ctx.drawImage(
           img,
@@ -1100,6 +1126,27 @@
     }
   }
 
+  function setRegionOverlayVersion(layerId: number, versionIndex: number) {
+    let changed = false;
+    regionOverlays = regionOverlays.map((layer) => {
+      if (layer.id !== layerId) return layer;
+      const versions = getRegionOverlayVersions(layer);
+      if (versions.length === 0) return layer;
+      const safeVersionIndex = Number.isFinite(versionIndex) ? Math.round(versionIndex) : 0;
+      const nextIndex = Math.max(0, Math.min(versions.length - 1, safeVersionIndex));
+      changed = true;
+      return {
+        ...layer,
+        versions,
+        activeVersionIndex: nextIndex,
+        dataUrl: versions[nextIndex]
+      };
+    });
+    if (changed) {
+      scheduleCompositePreviewRender();
+    }
+  }
+
   function isTileIntersectingSelection(tile: any): boolean {
     const x1 = tile.x;
     const y1 = tile.y;
@@ -1249,6 +1296,71 @@
     }
     ctx.drawImage(sourceImage, safeX, safeY, safeW, safeH, 0, 0, safeW, safeH);
     return canvas.toDataURL(preferJpeg ? 'image/jpeg' : 'image/png', 0.92);
+  }
+
+  type RegionRect = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+
+  async function generateRegionOverlayDataUrl(region: RegionRect): Promise<string> {
+    const operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
+    let resultBlob: Blob;
+
+    if (operationMode === 'mock') {
+      resultBlob = await generateMockTile(region.width, region.height, 0, 0);
+    } else {
+      const apiKey = localStorage.getItem('gemini_api_key');
+      const model = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
+      const apiBaseUrl = getApiBaseUrl();
+      if (!apiKey) throw new Error('API Key not found. Please set it in Settings.');
+
+      let prompt = buildPromptForTile({
+        r: 0,
+        c: 0,
+        w: region.width,
+        h: region.height
+      });
+      prompt += `\nGenerate only the selected box region (${region.width}x${region.height}) from the input image.`;
+
+      const useFullImageReference = isFullImageReferenceEnabled();
+      const regionDataUrl = await cropRegionInputDataUrl(
+        region.x,
+        region.y,
+        region.width,
+        region.height,
+        true
+      );
+      const regionResponse = await fetch(regionDataUrl);
+      if (!regionResponse.ok) {
+        throw new Error(`Failed to read region image (${regionResponse.status})`);
+      }
+      const croppedBlob = await regionResponse.blob();
+
+      if (isVerboseLoggingEnabled()) {
+        dispatch('log', {
+          type: 'info',
+          message: `[Prompt box ${region.x},${region.y},${region.width},${region.height}] ${prompt.replace(/\n/g, '\\n')}`
+        });
+      }
+
+      resultBlob = await generateImage(croppedBlob, prompt, model, apiKey, {
+        apiBaseUrl,
+        fullImageBlob: useFullImageReference ? await getFullImageBlob() : null
+      });
+    }
+
+    const reader = new FileReader();
+    reader.readAsDataURL(resultBlob);
+    const resultB64Raw = await new Promise<string>((resolve) => {
+      reader.onloadend = () => resolve(reader.result as string);
+    });
+    return ensureImageDataUrl(
+      resultB64Raw,
+      bgRemovalEnabled ? 'image/png' : 'image/jpeg'
+    );
   }
 
   function readPreparedValue(prepared: any, camelKey: string, snakeKey: string): string {
@@ -1479,6 +1591,62 @@
     }
   }
 
+  async function regenerateRegionOverlay(layerId: number) {
+    if (isProcessing || isSplitting || isMerging || isRegionProcessing) return;
+    const existingLayer = regionOverlays.find((layer) => layer.id === layerId);
+    if (!existingLayer) return;
+
+    const region: RegionRect = {
+      x: Math.round(existingLayer.x),
+      y: Math.round(existingLayer.y),
+      width: Math.max(1, Math.round(existingLayer.width)),
+      height: Math.max(1, Math.round(existingLayer.height))
+    };
+
+    try {
+      isRegionProcessing = true;
+      updateStatus(
+        String($t('generatingSelectionRegionStatus')),
+        `${String($t('statusRegion'))} ${region.width}x${region.height}`,
+        10
+      );
+      const resultB64 = await generateRegionOverlayDataUrl(region);
+      updateStatus(
+        String($t('applyingSelectionOverlayStatus')),
+        `${String($t('statusRegion'))} ${region.width}x${region.height}`,
+        90
+      );
+
+      let generatedVersion = 1;
+      regionOverlays = regionOverlays.map((layer) => {
+        if (layer.id !== layerId) return layer;
+        const versions = [...getRegionOverlayVersions(layer), resultB64];
+        const activeVersionIndex = versions.length - 1;
+        generatedVersion = versions.length;
+        return {
+          ...layer,
+          versions,
+          activeVersionIndex,
+          dataUrl: versions[activeVersionIndex]
+        };
+      });
+
+      scheduleCompositePreviewRender();
+      dispatch('log', {
+        type: 'success',
+        message: `Regenerated box layer ${layerId} (v${generatedVersion}).`
+      });
+    } catch (e: any) {
+      dispatch('log', {
+        type: 'error',
+        message: `Box layer regeneration failed: ${e?.message || e}`
+      });
+    } finally {
+      isRegionProcessing = false;
+      clearStatus();
+    }
+  }
+
   async function generateSelectionTiles() {
     if (!boxGenerateMode) return;
     if (isProcessing || isSplitting || isMerging || isRegionProcessing) return;
@@ -1497,7 +1665,6 @@
       if (selectedIndices.length === 0) {
         throw new Error('No tiles overlap with the selected box.');
       }
-      const selectedCount = selectedIndices.length;
       const region = {
         x: Math.round(boxX),
         y: Math.round(boxY),
@@ -1506,70 +1673,15 @@
       };
       updateStatus(
         String($t('generatingSelectionRegionStatus')),
-        `${String($t('statusRegion'))} ${region.width}x${region.height}, ${selectedCount} ${String($t('tileCount'))}`,
+        `${String($t('statusRegion'))} ${region.width}x${region.height}`,
         10
       );
 
       dispatch('log', {
         type: 'info',
-        message: `Generating one continuous region overlay for ${selectedCount} tiles...`
+        message: 'Generating one continuous region overlay...'
       });
-
-      const operationMode = localStorage.getItem('gemini_operation_mode') || 'default';
-      let resultBlob: Blob;
-
-      if (operationMode === 'mock') {
-        resultBlob = await generateMockTile(region.width, region.height, 0, 0);
-      } else {
-        const apiKey = localStorage.getItem('gemini_api_key');
-        const model = localStorage.getItem('gemini_model') || 'gemini-2.5-flash-image';
-        const apiBaseUrl = getApiBaseUrl();
-        if (!apiKey) throw new Error("API Key not found. Please set it in Settings.");
-
-        let prompt = buildPromptForTile({
-          r: 0,
-          c: 0,
-          w: region.width,
-          h: region.height
-        });
-        prompt += `\nGenerate only the selected box region (${region.width}x${region.height}) from the input image.`;
-
-        const useFullImageReference = isFullImageReferenceEnabled();
-        const regionDataUrl = await cropRegionInputDataUrl(
-          region.x,
-          region.y,
-          region.width,
-          region.height,
-          true
-        );
-        const regionResponse = await fetch(regionDataUrl);
-        if (!regionResponse.ok) {
-          throw new Error(`Failed to read region image (${regionResponse.status})`);
-        }
-        const croppedBlob = await regionResponse.blob();
-
-        if (isVerboseLoggingEnabled()) {
-          dispatch('log', {
-            type: 'info',
-            message: `[Prompt box ${region.x},${region.y},${region.width},${region.height}] ${prompt.replace(/\n/g, '\\n')}`
-          });
-        }
-
-        resultBlob = await generateImage(croppedBlob, prompt, model, apiKey, {
-          apiBaseUrl,
-          fullImageBlob: useFullImageReference ? await getFullImageBlob() : null
-        });
-      }
-
-      const reader = new FileReader();
-      reader.readAsDataURL(resultBlob);
-      const resultB64Raw = await new Promise<string>((resolve) => {
-        reader.onloadend = () => resolve(reader.result as string);
-      });
-      const resultB64 = ensureImageDataUrl(
-        resultB64Raw,
-        bgRemovalEnabled ? 'image/png' : 'image/jpeg'
-      );
+      const resultB64 = await generateRegionOverlayDataUrl(region);
       updateStatus(
         String($t('applyingSelectionOverlayStatus')),
         `${String($t('statusRegion'))} ${region.width}x${region.height}`,
@@ -1585,13 +1697,15 @@
           width: region.width,
           height: region.height,
           dataUrl: resultB64,
+          versions: [resultB64],
+          activeVersionIndex: 0,
           visible: true
         }
       ];
       scheduleCompositePreviewRender();
       dispatch('log', {
         type: 'success',
-        message: `Selection-box generation complete (${selectedCount} tiles).`
+        message: 'Selection-box generation complete.'
       });
     } catch (e: any) {
       dispatch('log', {
@@ -1801,6 +1915,33 @@
               <span class="text-[11px] font-mono text-white/90 truncate flex-1">
                 {$t('layer')} {entry.index + 1} ({Math.round(entry.layer.width)}x{Math.round(entry.layer.height)})
               </span>
+              <select
+                value={getRegionOverlayActiveVersionIndex(entry.layer)}
+                on:change={(e) => setRegionOverlayVersion(entry.layer.id, parseInt((e.currentTarget as HTMLSelectElement).value))}
+                class="h-7 rounded-md border border-white/20 bg-black/35 text-[10px] px-1 text-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                title={$t('layerVersion')}
+                aria-label={$t('layerVersion')}
+              >
+                {#each getRegionOverlayVersions(entry.layer) as _version, versionIndex}
+                  <option value={versionIndex}>v{versionIndex + 1}</option>
+                {/each}
+              </select>
+              <button
+                type="button"
+                on:mousedown|stopPropagation
+                on:click|stopPropagation={() => regenerateRegionOverlay(entry.layer.id)}
+                disabled={isSplitting || isMerging || isProcessing || isRegionProcessing}
+                class="h-7 w-7 inline-flex items-center justify-center rounded-md border border-blue-300/35 text-blue-100 hover:bg-blue-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={$t('regenerate')}
+                aria-label={$t('regenerate')}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 2v6h-6"></path>
+                  <path d="M3 12a9 9 0 0 1 15.5-6.36L21 8"></path>
+                  <path d="M3 22v-6h6"></path>
+                  <path d="M21 12a9 9 0 0 1-15.5 6.36L3 16"></path>
+                </svg>
+              </button>
               <button
                 type="button"
                 on:mousedown|stopPropagation
